@@ -29,6 +29,10 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   private val algorithm = Engine.algorithm(config.algorithm)
   private val auth      = Authorization(Credentials.Token(AuthScheme.Bearer, config.token))
 
+  // Unary calls (challenge / accept / move) fast-fail on a short timeout; the base `client` stays untimed
+  // (Main sets withTimeout(Inf)) for the long-lived ndjson streams.
+  private def fireUnary(request: Request[IO]): IO[Unit] = client.status(request).timeout(10.seconds).void
+
   /** React to account events forever, with the optional opening challenge fired in the background once the account
     * stream is up (so we don't miss our own gameStart).
     */
@@ -38,7 +42,7 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
     config.challenge.traverse_ : (team, name) =>
       // Brief delay so the account stream is subscribed before we challenge and the game starts.
       IO.sleep(2.seconds) *> IO.println(s"[refbot] challenging $team|$name") *>
-        client.status(POST(ChallengeTarget(team, name), config.baseUri / "bot" / "challenge").putHeaders(auth)).void
+        fireUnary(POST(ChallengeTarget(team, name), config.baseUri / "bot" / "challenge").putHeaders(auth))
 
   private def accountEvents: Stream[IO, Unit] =
     ndjson[BotEvent](Request[IO](GET, config.baseUri / "bot" / "stream" / "event").putHeaders(auth)).evalMap(handle)
@@ -50,7 +54,7 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
     case BotEvent.ChallengeDeclined(id) => IO.println(s"[refbot] challenge $id declined")
 
   private def accept(id: String): IO[Unit] =
-    client.status(Request[IO](POST, config.baseUri / "bot" / "challenge" / id / "accept").putHeaders(auth)).void
+    fireUnary(Request[IO](POST, config.baseUri / "bot" / "challenge" / id / "accept").putHeaders(auth))
 
   /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. */
   private def playGame(gameId: String): IO[Unit] =
@@ -81,7 +85,7 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
 
   private def submitMove(gameId: String, moves: List[String]): IO[Unit] =
     IO.println(s"[refbot] game $gameId submitting $moves") *>
-      client.status(POST(BotMove(moves), config.baseUri / "bot" / "game" / gameId / "move").putHeaders(auth)).void
+      fireUnary(POST(BotMove(moves), config.baseUri / "bot" / "game" / gameId / "move").putHeaders(auth))
 
   /** Decode an ndjson response body line-by-line; undecodable lines (e.g. keep-alives) are dropped. */
   private def ndjson[A: Decoder](request: Request[IO]): Stream[IO, A] =
