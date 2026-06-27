@@ -15,6 +15,8 @@ import org.http4s.client.dsl.io.*
 import org.http4s.headers.Authorization
 import org.http4s.{AuthScheme, Credentials, Request}
 
+import scala.concurrent.duration.*
+
 /** A Lichess-bot-style client of the Dice Chess Bot API: it listens on the account stream, accepts incoming challenges,
   * and plays each game with the engine.
   *
@@ -27,20 +29,25 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   private val algorithm = Engine.algorithm(config.algorithm)
   private val auth      = Authorization(Credentials.Token(AuthScheme.Bearer, config.token))
 
-  /** Optionally fire an opening challenge (for bot-vs-bot demos), then react to account events forever. */
-  def run: IO[Unit] = openingChallenge *> accountEvents.compile.drain
+  /** React to account events forever, with the optional opening challenge fired in the background once the account
+    * stream is up (so we don't miss our own gameStart).
+    */
+  def run: IO[Unit] = openingChallenge.background.surround(accountEvents.compile.drain)
 
   private def openingChallenge: IO[Unit] =
     config.challenge.traverse_ : (team, name) =>
-      client.status(POST(ChallengeTarget(team, name), config.baseUri / "bot" / "challenge").putHeaders(auth)).void
+      // Brief delay so the account stream is subscribed before we challenge and the game starts.
+      IO.sleep(2.seconds) *> IO.println(s"[refbot] challenging $team|$name") *>
+        client.status(POST(ChallengeTarget(team, name), config.baseUri / "bot" / "challenge").putHeaders(auth)).void
 
   private def accountEvents: Stream[IO, Unit] =
     ndjson[BotEvent](Request[IO](GET, config.baseUri / "bot" / "stream" / "event").putHeaders(auth)).evalMap(handle)
 
   private def handle(event: BotEvent): IO[Unit] = event match
-    case BotEvent.ChallengeReceived(id, _) => accept(id)
-    case BotEvent.GameStart(gameId)        => supervisor.supervise(playGame(gameId)).void
-    case BotEvent.ChallengeDeclined(_)     => IO.unit
+    case BotEvent.ChallengeReceived(id, _) => IO.println(s"[refbot] accepting challenge $id") *> accept(id)
+    case BotEvent.GameStart(gameId)        =>
+      IO.println(s"[refbot] game $gameId started") *> supervisor.supervise(playGame(gameId)).void
+    case BotEvent.ChallengeDeclined(id) => IO.println(s"[refbot] challenge $id declined")
 
   private def accept(id: String): IO[Unit] =
     client.status(Request[IO](POST, config.baseUri / "bot" / "challenge" / id / "accept").putHeaders(auth)).void
@@ -58,7 +65,9 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   private def onGameEvent(gameId: String, handled: Ref[IO, Long], event: GameEvent): IO[Unit] = event match
     case GameEvent.DiceRolled(v, _, _, dfen)         => maybeMove(gameId, handled, v, dfen)
     case GameEvent.Snapshot(v, ps) if ps.dicePending => maybeMove(gameId, handled, v, ps.dfen)
-    case _                                           => IO.unit
+    case GameEvent.GameEnded(_, over)                =>
+      IO.println(s"[refbot] game $gameId ended: ${over.result} (${over.termination})")
+    case _ => IO.unit
 
   private def maybeMove(gameId: String, handled: Ref[IO, Long], version: Long, dfen: String): IO[Unit] =
     handled
@@ -71,7 +80,8 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
             case Some(moves) => submitMove(gameId, moves)
 
   private def submitMove(gameId: String, moves: List[String]): IO[Unit] =
-    client.status(POST(BotMove(moves), config.baseUri / "bot" / "game" / gameId / "move").putHeaders(auth)).void
+    IO.println(s"[refbot] game $gameId submitting $moves") *>
+      client.status(POST(BotMove(moves), config.baseUri / "bot" / "game" / gameId / "move").putHeaders(auth)).void
 
   /** Decode an ndjson response body line-by-line; undecodable lines (e.g. keep-alives) are dropped. */
   private def ndjson[A: Decoder](request: Request[IO]): Stream[IO, A] =

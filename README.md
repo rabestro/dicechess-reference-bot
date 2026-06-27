@@ -34,6 +34,19 @@ BOT_TOKEN=… PLAY_API_BASE_URL=http://localhost:8080 sbt run
 For a bot-vs-bot demo, run two instances with distinct tokens and set `BOT_CHALLENGE` on one so it
 opens the game; both accept and play to a finish.
 
+### Container
+
+CI publishes a multi-arch image to `ghcr.io/rabestro/dicechess-reference-bot` on every push to `main`
+(and tagged `vX.Y.Z` on release). Run it next to the play-api on the homelab via `docker-compose.yaml`
+— set `BOT_TOKEN`, `PLAY_API_BASE_URL`, and `BOT_ALGORITHM` in `.env`:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+The bot is an outbound client (no listening port); it reconnects to the play-api and plays whatever
+challenges arrive.
+
 ## Stack
 
 Scala 3 · cats-effect · fs2 · http4s-ember-client · Circe · the dice-chess engine (JVM). Same

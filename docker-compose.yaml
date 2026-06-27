@@ -1,0 +1,17 @@
+# Pinned project name so the stack is stable regardless of the deploy directory.
+name: dicechess-reference-bot
+
+services:
+  bot:
+    # Tag is overridable: prod pins BOT_TAG=vX.Y.Z, unset defaults to :latest.
+    image: ghcr.io/rabestro/dicechess-reference-bot:${BOT_TAG:-latest}
+    restart: always
+    env_file:
+      - .env
+    environment:
+      # Point at the play-api (on the homelab, the play-api service/host); the token must match a
+      # PLAY_BOT_TOKENS entry on the server.
+      PLAY_API_BASE_URL: ${PLAY_API_BASE_URL:-http://play-api:8080}
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      BOT_ALGORITHM: ${BOT_ALGORITHM:-greedy}
+      JAVA_OPTS: "-Dcats.effect.warnOnNonMainThreadDetected=false --sun-misc-unsafe-memory-access=allow"
