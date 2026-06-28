@@ -24,10 +24,9 @@ import scala.concurrent.duration.*
   * simply reacts to every dice roll by computing and submitting a move — the server applies it only when it is in fact
   * this bot's turn (off-turn submissions are harmlessly rejected).
   */
-final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervisor[IO]):
+final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervisor[IO], strategy: Strategy):
 
-  private val algorithm = Engine.algorithm(config.algorithm)
-  private val auth      = Authorization(Credentials.Token(AuthScheme.Bearer, config.token))
+  private val auth = Authorization(Credentials.Token(AuthScheme.Bearer, config.token))
 
   // Unary calls (challenge / accept / move) fast-fail on a short timeout; the base `client` stays untimed
   // (Main sets withTimeout(Inf)) for the long-lived ndjson streams.
@@ -79,7 +78,7 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
       .flatMap: fresh =>
         if !fresh then IO.unit
         else
-          Engine.chooseMoves(algorithm, dfen) match
+          strategy.chooseMoves(dfen) match
             case None        => IO.unit // forced pass: the server advances on its own
             case Some(moves) => submitMove(gameId, moves)
 
