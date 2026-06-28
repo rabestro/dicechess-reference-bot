@@ -13,6 +13,7 @@ updates:
       - "rabestro"
     labels:
       - "ci-cd"
+      - "dependencies"
     commit-message:
       prefix: "chore"
 
@@ -29,5 +30,6 @@ updates:
       - "rabestro"
     labels:
       - "infrastructure"
+      - "dependencies"
     commit-message:
       prefix: "chore"

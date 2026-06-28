@@ -34,3 +34,5 @@ enhancement:
   - head-branch: ['^feat/']
 bug:
   - head-branch: ['^bug/']
+refactoring:
+  - head-branch: ['^refactor/']

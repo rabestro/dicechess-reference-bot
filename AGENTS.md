@@ -18,7 +18,7 @@ Example: `task/2-setup-repo-services`
 - Do not implement or open a PR unless an issue exists and the branch is named according to the pattern.
 - Always run `sbt scalafmtAll` on any generated code and ensure local validation passes before proposing a PR.
 - Human retains the ultimate authority to review, approve, and merge the PR.
-- **GitHub CLI Authentication**: On macOS, credentials are saved in the Keychain. When executing `gh` commands, explicitly set the token to an empty string (e.g., `GH_TOKEN="" gh issue create ...`) to avoid authentication errors.
+- **GitHub CLI Authentication**: On macOS, credentials are saved in the Keychain. When executing `gh` commands in a local interactive session, if keychain prompt issues occur, explicitly set the token to an empty string (e.g., `GH_TOKEN="" gh issue create ...`) to avoid authentication errors. Do **not** clear `GH_TOKEN` in CI/CD runners or remote non-interactive environments, as they rely on this token to authenticate.
 
 ## Developer Workflows
 - **Code Formatting**: `sbt scalafmtAll` runs scalafmt across the Scala sources.
