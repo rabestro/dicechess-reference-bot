@@ -32,18 +32,22 @@ object Protocol:
     case Active
     case Ended(over: GameOver)
 
+  /** Remaining time per side, in milliseconds, as of the carrying event. Absent (`null`) for unlimited games. */
+  final case class Clocks(white: Long, black: Long)
+
   final case class PublicGameState(
       version: Long,
       dfen: String,
       activeSeat: Seat,
       dicePending: Boolean,
-      status: GameStatus
+      status: GameStatus,
+      clocks: Option[Clocks]
   )
 
   /** Events on a game's stream (`GET /bot/game/stream/{id}`). */
   enum GameEvent:
     case Snapshot(v: Long, state: PublicGameState)
-    case DiceRolled(v: Long, seat: Seat, dice: List[Int], dfen: String)
+    case DiceRolled(v: Long, seat: Seat, dice: List[Int], dfen: String, clocks: Option[Clocks])
     case TurnPlayed(v: Long, seat: Seat, moves: List[String], fenAfter: String)
     case GameEnded(v: Long, over: GameOver)
     case Rejected(v: Long, seat: Seat, reason: String)
@@ -76,6 +80,7 @@ object Protocol:
   given Codec[GameResult]      = deriveCodec
   given Codec[GameOver]        = deriveCodec
   given Codec[GameStatus]      = deriveCodec
+  given Codec[Clocks]          = deriveCodec
   given Codec[Principal]       = deriveCodec
   given Codec[PublicGameState] = deriveCodec
   given Codec[GameEvent]       = deriveCodec

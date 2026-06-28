@@ -16,16 +16,25 @@ class ProtocolSuite extends munit.FunSuite:
     roundtrip[BotEvent](BotEvent.ChallengeDeclined("c1"))
 
   test("game events round-trip"):
-    roundtrip[GameEvent](GameEvent.DiceRolled(1L, Seat.White, List(1, 2, 6), "dfen"))
+    roundtrip[GameEvent](GameEvent.DiceRolled(1L, Seat.White, List(1, 2, 6), "dfen", Some(Clocks(180000, 175000))))
+    roundtrip[GameEvent](GameEvent.DiceRolled(2L, Seat.Black, List(4), "dfen", None))
     roundtrip[GameEvent](GameEvent.GameEnded(9L, GameOver(GameResult.Win(Side.Black), Termination.KingCaptured)))
 
   // Pin compatibility with the exact JSON dicechess-play-api emits, so a server-side codec change
   // that would break this bot fails here.
   test("decodes the play-api wire shapes the bot consumes"):
     assertEquals(decode[BotEvent]("""{"GameStart":{"gameId":"g1"}}"""), Right(BotEvent.GameStart("g1")))
+    // Timed game: clocks present (remaining ms per side).
     assertEquals(
-      decode[GameEvent]("""{"DiceRolled":{"v":1,"seat":"White","dice":[2,3,6],"dfen":"fen"}}"""),
-      Right(GameEvent.DiceRolled(1L, Seat.White, List(2, 3, 6), "fen"))
+      decode[GameEvent](
+        """{"DiceRolled":{"v":1,"seat":"White","dice":[2,3,6],"dfen":"fen","clocks":{"white":180000,"black":175000}}}"""
+      ),
+      Right(GameEvent.DiceRolled(1L, Seat.White, List(2, 3, 6), "fen", Some(Clocks(180000, 175000))))
+    )
+    // Unlimited game: clocks null.
+    assertEquals(
+      decode[GameEvent]("""{"DiceRolled":{"v":1,"seat":"White","dice":[2,3,6],"dfen":"fen","clocks":null}}"""),
+      Right(GameEvent.DiceRolled(1L, Seat.White, List(2, 3, 6), "fen", None))
     )
 
   test("encodes what the bot sends"):

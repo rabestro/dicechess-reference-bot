@@ -37,10 +37,11 @@ de-duplication — is handled for you. **You implement one method:**
 
 ```scala
 trait Strategy:
-  /** Given the gameId and a DFEN (the position + the rolled dice for the side to move), return the turn's
-    * micro-moves in UCI — one per die you use — or None to pass when there is no legal move.
-    * gameId lets you keep per-game state or tag logs; the reference engine ignores it. */
-  def chooseMoves(gameId: String, dfen: String): Option[List[String]]
+  /** Return the turn's micro-moves in UCI — one per die you use — or None to pass when there is no
+    * legal move. The MoveContext carries the gameId (keep per-game state / tag logs), the DFEN
+    * (position + rolled dice for the side to move), and the clock (your remaining time and the
+    * opponent's, or None for an unlimited game). */
+  def chooseMoves(ctx: MoveContext): Option[List[String]]
 ```
 
 The default [`EngineStrategy`](src/main/scala/dicechess/refbot/Strategy.scala) just asks the dice-chess
