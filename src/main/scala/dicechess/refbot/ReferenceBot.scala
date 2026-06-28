@@ -78,9 +78,12 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
       .flatMap: fresh =>
         if !fresh then IO.unit
         else
-          strategy.chooseMoves(dfen) match
-            case None        => IO.unit // forced pass: the server advances on its own
-            case Some(moves) => submitMove(gameId, moves)
+          // Run the (CPU-bound, synchronous) strategy on the blocking pool so a slow search never starves the compute
+          // pool — that would stall the keep-alive on the long-lived ndjson streams and drop the connection.
+          IO.blocking(strategy.chooseMoves(gameId, dfen))
+            .flatMap:
+              case None        => IO.unit // forced pass: the server advances on its own
+              case Some(moves) => submitMove(gameId, moves)
 
   private def submitMove(gameId: String, moves: List[String]): IO[Unit] =
     IO.println(s"[refbot] game $gameId submitting $moves") *>
