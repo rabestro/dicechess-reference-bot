@@ -11,8 +11,13 @@ import scala.concurrent.duration.FiniteDuration
   */
 final case class MoveContext(gameId: String, dfen: String, clock: Option[TurnClock])
 
-/** Remaining time for the side to move (`remaining`) and its `opponent`, in a timed game — so a strategy can budget. */
-final case class TurnClock(remaining: FiniteDuration, opponent: FiniteDuration)
+/** The clock for a timed game, so a strategy can budget its thinking.
+  *
+  *   - `remaining` — time left for the side to move (before this turn).
+  *   - `opponent` — time left for the other side.
+  *   - `increment` — the Fischer increment credited per completed turn (`Duration.Zero` for sudden death / per-move).
+  */
+final case class TurnClock(remaining: FiniteDuration, opponent: FiniteDuration, increment: FiniteDuration)
 
 /** The one thing a bot author replaces.
   *
@@ -29,10 +34,16 @@ trait Strategy:
   def chooseMoves(ctx: MoveContext): Option[List[String]]
 
 /** The reference strategy: the dice-chess engine's search — the same engine the server validates with, so legality
-  * matches exactly. It ignores the clock for now (engine-side time management lands later). Swap this out for your own
-  * [[Strategy]] in `Main` to build your bot.
+  * matches exactly. For a time-budgeted algorithm (e.g. monte-carlo) in a timed game it spends the moving side's
+  * remaining time as a per-turn search deadline (via the engine's TimeManager); instant algorithms (greedy) ignore the
+  * clock. Swap this out for your own [[Strategy]] in `Main` to build your bot.
   */
 final class EngineStrategy(algorithmName: String) extends Strategy:
   private val algorithm = Engine.algorithm(algorithmName)
 
-  def chooseMoves(ctx: MoveContext): Option[List[String]] = Engine.chooseMoves(algorithm, ctx.dfen)
+  def chooseMoves(ctx: MoveContext): Option[List[String]] =
+    Engine.chooseMoves(
+      algorithm,
+      ctx.dfen,
+      ctx.clock.map(c => Engine.TurnBudget(c.remaining.toMillis, c.increment.toMillis))
+    )

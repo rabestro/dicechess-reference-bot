@@ -36,6 +36,14 @@ class ProtocolSuite extends munit.FunSuite:
       decode[GameEvent]("""{"DiceRolled":{"v":1,"seat":"White","dice":[2,3,6],"dfen":"fen","clocks":null}}"""),
       Right(GameEvent.DiceRolled(1L, Seat.White, List(2, 3, 6), "fen", None))
     )
+    // Snapshot carries the time control (the only event that does) — the bot needs the Fischer increment to budget.
+    val snapshot = decode[GameEvent](
+      """{"Snapshot":{"v":0,"state":{"version":0,"dfen":"fen","activeSeat":"White","dicePending":true,"status":{"Active":{}},"clocks":{"white":300000,"black":300000},"timeControl":{"Fischer":{"initialSeconds":300,"incrementSeconds":3}}}}}"""
+    )
+    assertEquals(
+      snapshot.toOption.collect { case GameEvent.Snapshot(_, s) => s.timeControl },
+      Some(Some(TimeControl.Fischer(300, 3)))
+    )
 
   test("encodes what the bot sends"):
     assertEquals(BotMove(List("e2e4", "g1f3")).asJson.noSpaces, """{"moves":["e2e4","g1f3"]}""")

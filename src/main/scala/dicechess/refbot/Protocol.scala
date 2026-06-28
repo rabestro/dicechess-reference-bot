@@ -32,6 +32,13 @@ object Protocol:
     case Active
     case Ended(over: GameOver)
 
+  /** A game's time control (mirrors the server ADT). Carries the Fischer increment the bot needs to budget. */
+  enum TimeControl:
+    case Unlimited
+    case SuddenDeath(initialSeconds: Int)
+    case Fischer(initialSeconds: Int, incrementSeconds: Int)
+    case PerMove(secondsPerMove: Int)
+
   /** Remaining time per side, in milliseconds, as of the carrying event. Absent (`null`) for unlimited games. */
   final case class Clocks(white: Long, black: Long)
 
@@ -41,7 +48,8 @@ object Protocol:
       activeSeat: Seat,
       dicePending: Boolean,
       status: GameStatus,
-      clocks: Option[Clocks]
+      clocks: Option[Clocks],
+      timeControl: Option[TimeControl]
   )
 
   /** Events on a game's stream (`GET /bot/game/stream/{id}`). */
@@ -80,6 +88,7 @@ object Protocol:
   given Codec[GameResult]      = deriveCodec
   given Codec[GameOver]        = deriveCodec
   given Codec[GameStatus]      = deriveCodec
+  given Codec[TimeControl]     = deriveCodec
   given Codec[Clocks]          = deriveCodec
   given Codec[Principal]       = deriveCodec
   given Codec[PublicGameState] = deriveCodec
