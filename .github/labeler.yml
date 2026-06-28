@@ -1,0 +1,38 @@
+# Domain labels from package paths
+api:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/main/scala/dicechess/refbot/Protocol.scala'
+engine:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/main/scala/dicechess/refbot/Engine.scala'
+infrastructure:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'Dockerfile'
+          - 'docker-compose.yaml'
+
+# Type labels from paths
+testing:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'src/test/**'
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+ci-cd:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'build.sbt'
+          - 'project/**'
+
+# Type labels from the branch naming convention: (task|feat|bug|refactor)/<issue>-<desc>
+enhancement:
+  - head-branch: ['^feat/']
+bug:
+  - head-branch: ['^bug/']
+refactoring:
+  - head-branch: ['^refactor/']
