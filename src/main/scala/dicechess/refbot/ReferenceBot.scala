@@ -66,13 +66,28 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
           .drain
 
   private def onGameEvent(gameId: String, handled: Ref[IO, Long], event: GameEvent): IO[Unit] = event match
-    case GameEvent.DiceRolled(v, _, _, dfen)         => maybeMove(gameId, handled, v, dfen)
-    case GameEvent.Snapshot(v, ps) if ps.dicePending => maybeMove(gameId, handled, v, ps.dfen)
-    case GameEvent.GameEnded(_, over)                =>
+    case GameEvent.DiceRolled(v, seat, _, dfen, clocks) => maybeMove(gameId, handled, v, dfen, turnClock(seat, clocks))
+    case GameEvent.Snapshot(v, ps) if ps.dicePending    =>
+      maybeMove(gameId, handled, v, ps.dfen, turnClock(ps.activeSeat, ps.clocks))
+    case GameEvent.GameEnded(_, over) =>
       IO.println(s"[refbot] game $gameId ended: ${over.result} (${over.termination})")
     case _ => IO.unit
 
-  private def maybeMove(gameId: String, handled: Ref[IO, Long], version: Long, dfen: String): IO[Unit] =
+  /** The side-to-move's clock, derived from the event's per-side remaining times. `None` for an unlimited game. */
+  private def turnClock(toMove: Seat, clocks: Option[Clocks]): Option[TurnClock] =
+    clocks.flatMap: c =>
+      toMove match
+        case Seat.White     => Some(TurnClock(c.white.millis, c.black.millis))
+        case Seat.Black     => Some(TurnClock(c.black.millis, c.white.millis))
+        case Seat.Spectator => None
+
+  private def maybeMove(
+      gameId: String,
+      handled: Ref[IO, Long],
+      version: Long,
+      dfen: String,
+      clock: Option[TurnClock]
+  ): IO[Unit] =
     handled
       .modify(last => if version > last then (version, true) else (last, false))
       .flatMap: fresh =>
@@ -80,7 +95,7 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
         else
           // Run the (CPU-bound, synchronous) strategy on the blocking pool so a slow search never starves the compute
           // pool — that would stall the keep-alive on the long-lived ndjson streams and drop the connection.
-          IO.blocking(strategy.chooseMoves(gameId, dfen))
+          IO.blocking(strategy.chooseMoves(MoveContext(gameId, dfen, clock)))
             .flatMap:
               case None        => IO.unit // forced pass: the server advances on its own
               case Some(moves) => submitMove(gameId, moves)
