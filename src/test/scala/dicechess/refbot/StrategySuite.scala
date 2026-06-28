@@ -12,12 +12,12 @@ class StrategySuite extends munit.FunSuite:
     assert(moves.exists(_.nonEmpty), s"expected a non-empty UCI move list, got $moves")
 
   test("greedy is instant — it returns a turn regardless of the clock"):
-    val clock = Some(TurnClock(remaining = 60.seconds, opponent = 60.seconds))
+    val clock = Some(TurnClock(remaining = 60.seconds, opponent = 60.seconds, increment = 3.seconds))
     val moves = EngineStrategy("greedy").chooseMoves(MoveContext("g", dfen, clock))
     assert(moves.exists(_.nonEmpty), s"expected a move, got $moves")
 
-  test("monte-carlo budgets its search by the clock and returns a turn within the deadline"):
-    // A small clock yields a short per-turn deadline; the time-budgeted search must still return a legal turn.
-    val clock = Some(TurnClock(remaining = 2.seconds, opponent = 2.seconds))
+  test("monte-carlo budgets its search by the clock (with increment) and returns a turn within the deadline"):
+    // A small Fischer clock yields a short per-turn deadline; the time-budgeted search must still return a legal turn.
+    val clock = Some(TurnClock(remaining = 2.seconds, opponent = 2.seconds, increment = 1.second))
     val moves = EngineStrategy("monte-carlo").chooseMoves(MoveContext("g", dfen, clock))
     assert(moves.exists(_.nonEmpty), s"expected a move from the deadline-bounded search, got $moves")

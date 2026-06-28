@@ -11,8 +11,13 @@ import scala.concurrent.duration.FiniteDuration
   */
 final case class MoveContext(gameId: String, dfen: String, clock: Option[TurnClock])
 
-/** Remaining time for the side to move (`remaining`) and its `opponent`, in a timed game — so a strategy can budget. */
-final case class TurnClock(remaining: FiniteDuration, opponent: FiniteDuration)
+/** The clock for a timed game, so a strategy can budget its thinking.
+  *
+  *   - `remaining` — time left for the side to move (before this turn).
+  *   - `opponent` — time left for the other side.
+  *   - `increment` — the Fischer increment credited per completed turn (`Duration.Zero` for sudden death / per-move).
+  */
+final case class TurnClock(remaining: FiniteDuration, opponent: FiniteDuration, increment: FiniteDuration)
 
 /** The one thing a bot author replaces.
   *
@@ -37,4 +42,8 @@ final class EngineStrategy(algorithmName: String) extends Strategy:
   private val algorithm = Engine.algorithm(algorithmName)
 
   def chooseMoves(ctx: MoveContext): Option[List[String]] =
-    Engine.chooseMoves(algorithm, ctx.dfen, ctx.clock.map(_.remaining.toMillis))
+    Engine.chooseMoves(
+      algorithm,
+      ctx.dfen,
+      ctx.clock.map(c => Engine.TurnBudget(c.remaining.toMillis, c.increment.toMillis))
+    )

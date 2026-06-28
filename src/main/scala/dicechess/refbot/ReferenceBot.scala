@@ -17,6 +17,11 @@ import org.http4s.{AuthScheme, Credentials, Request}
 
 import scala.concurrent.duration.*
 
+/** Per-game memory: the highest game-event version already handled (turn de-duplication) plus the time control, which
+  * rides only on the Snapshot yet is needed to budget the increment on later DiceRolled turns.
+  */
+final private case class GameMemory(handled: Long, timeControl: Option[TimeControl])
+
 /** A Lichess-bot-style client of the Dice Chess Bot API: it listens on the account stream, accepts incoming challenges,
   * and plays each game with the engine.
   *
@@ -58,38 +63,45 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. */
   private def playGame(gameId: String): IO[Unit] =
     Ref
-      .of[IO, Long](-1L)
-      .flatMap: handled =>
+      .of[IO, GameMemory](GameMemory(handled = -1L, timeControl = None))
+      .flatMap: mem =>
         ndjson[GameEvent](Request[IO](GET, config.baseUri / "bot" / "game" / "stream" / gameId).putHeaders(auth))
-          .evalMap(event => onGameEvent(gameId, handled, event))
+          .evalMap(event => onGameEvent(gameId, mem, event))
           .compile
           .drain
 
-  private def onGameEvent(gameId: String, handled: Ref[IO, Long], event: GameEvent): IO[Unit] = event match
-    case GameEvent.DiceRolled(v, seat, _, dfen, clocks) => maybeMove(gameId, handled, v, dfen, turnClock(seat, clocks))
-    case GameEvent.Snapshot(v, ps) if ps.dicePending    =>
-      maybeMove(gameId, handled, v, ps.dfen, turnClock(ps.activeSeat, ps.clocks))
+  private def onGameEvent(gameId: String, mem: Ref[IO, GameMemory], event: GameEvent): IO[Unit] = event match
+    case GameEvent.DiceRolled(v, seat, _, dfen, clocks) =>
+      mem.get.flatMap(m => maybeMove(gameId, mem, v, dfen, turnClock(seat, clocks, m.timeControl)))
+    case GameEvent.Snapshot(v, ps) =>
+      // The time control rides only on the Snapshot; remember it so later DiceRolled turns can carry the increment.
+      mem.update(_.copy(timeControl = ps.timeControl)) *>
+        (if ps.dicePending then maybeMove(gameId, mem, v, ps.dfen, turnClock(ps.activeSeat, ps.clocks, ps.timeControl))
+         else IO.unit)
     case GameEvent.GameEnded(_, over) =>
       IO.println(s"[refbot] game $gameId ended: ${over.result} (${over.termination})")
     case _ => IO.unit
 
-  /** The side-to-move's clock, derived from the event's per-side remaining times. `None` for an unlimited game. */
-  private def turnClock(toMove: Seat, clocks: Option[Clocks]): Option[TurnClock] =
+  /** The side-to-move's clock (with the Fischer increment from the time control), or `None` for an unlimited game. */
+  private def turnClock(toMove: Seat, clocks: Option[Clocks], timeControl: Option[TimeControl]): Option[TurnClock] =
+    val increment = timeControl match
+      case Some(TimeControl.Fischer(_, incrementSeconds)) => incrementSeconds.seconds
+      case _                                              => Duration.Zero
     clocks.flatMap: c =>
       toMove match
-        case Seat.White     => Some(TurnClock(c.white.millis, c.black.millis))
-        case Seat.Black     => Some(TurnClock(c.black.millis, c.white.millis))
+        case Seat.White     => Some(TurnClock(c.white.millis, c.black.millis, increment))
+        case Seat.Black     => Some(TurnClock(c.black.millis, c.white.millis, increment))
         case Seat.Spectator => None
 
   private def maybeMove(
       gameId: String,
-      handled: Ref[IO, Long],
+      mem: Ref[IO, GameMemory],
       version: Long,
       dfen: String,
       clock: Option[TurnClock]
   ): IO[Unit] =
-    handled
-      .modify(last => if version > last then (version, true) else (last, false))
+    mem
+      .modify(m => if version > m.handled then (m.copy(handled = version), true) else (m, false))
       .flatMap: fresh =>
         if !fresh then IO.unit
         else
