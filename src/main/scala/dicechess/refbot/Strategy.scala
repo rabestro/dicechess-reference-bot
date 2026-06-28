@@ -2,8 +2,8 @@ package dicechess.refbot
 
 /** The one thing a bot author replaces.
   *
-  * Given a DFEN — the position plus the rolled dice for the side to move — return the turn's micro-moves in UCI (one per
-  * die you use), or `None` to pass when there is no legal move. Everything else — auth, the account/game ndjson
+  * Given a DFEN — the position plus the rolled dice for the side to move — return the turn's micro-moves in UCI (one
+  * per die you use), or `None` to pass when there is no legal move. Everything else — auth, the account/game ndjson
   * streams, reconnect, move submission, turn de-duplication — is handled by [[ReferenceBot]], so a fork only implements
   * this trait and wires it in `Main`.
   *
