@@ -1,0 +1,33 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    assignees:
+      - "rabestro"
+    reviewers:
+      - "rabestro"
+    labels:
+      - "ci-cd"
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    assignees:
+      - "rabestro"
+    reviewers:
+      - "rabestro"
+    labels:
+      - "infrastructure"
+    commit-message:
+      prefix: "chore"
