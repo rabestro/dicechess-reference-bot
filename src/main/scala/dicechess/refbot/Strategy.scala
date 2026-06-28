@@ -29,10 +29,12 @@ trait Strategy:
   def chooseMoves(ctx: MoveContext): Option[List[String]]
 
 /** The reference strategy: the dice-chess engine's search — the same engine the server validates with, so legality
-  * matches exactly. It ignores the clock for now (engine-side time management lands later). Swap this out for your own
-  * [[Strategy]] in `Main` to build your bot.
+  * matches exactly. For a time-budgeted algorithm (e.g. monte-carlo) in a timed game it spends the moving side's
+  * remaining time as a per-turn search deadline (via the engine's TimeManager); instant algorithms (greedy) ignore the
+  * clock. Swap this out for your own [[Strategy]] in `Main` to build your bot.
   */
 final class EngineStrategy(algorithmName: String) extends Strategy:
   private val algorithm = Engine.algorithm(algorithmName)
 
-  def chooseMoves(ctx: MoveContext): Option[List[String]] = Engine.chooseMoves(algorithm, ctx.dfen)
+  def chooseMoves(ctx: MoveContext): Option[List[String]] =
+    Engine.chooseMoves(algorithm, ctx.dfen, ctx.clock.map(_.remaining.toMillis))
