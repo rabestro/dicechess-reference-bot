@@ -34,6 +34,9 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
 
   private val auth = Authorization(Credentials.Token(AuthScheme.Bearer, config.token))
 
+  // One shared, thread-safe CSPRNG for dice seeds (reused across games rather than re-seeded per call).
+  private val rng = SecureRandom()
+
   // Unary calls (challenge / accept / move) fast-fail on a short timeout; the base `client` stays untimed
   // (Main sets withTimeout(Inf)) for the long-lived ndjson streams.
   private def fireUnary(request: Request[IO]): IO[Unit] = client.status(request).timeout(10.seconds).void
@@ -86,7 +89,7 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   /** A fresh 16-byte (128-bit) client dice seed, hex-encoded. */
   private def randomSeed: IO[String] = IO:
     val bytes = new Array[Byte](16)
-    SecureRandom().nextBytes(bytes)
+    rng.nextBytes(bytes)
     bytes.map("%02x".format(_)).mkString
 
   private def onGameEvent(gameId: String, mem: Ref[IO, GameMemory], event: GameEvent): IO[Unit] = event match
