@@ -44,7 +44,23 @@ class ProtocolSuite extends munit.FunSuite:
       snapshot.toOption.collect { case GameEvent.Snapshot(_, s) => s.timeControl },
       Some(Some(TimeControl.Fischer(300, 3)))
     )
+    // Forward-compat: the server now adds provably-fair fields (commit on every snapshot; seed/clientSeeds on the
+    // reveal) that the bot does not model. Circe must ignore the extras rather than fail to decode.
+    assertEquals(
+      decode[GameEvent](
+        """{"GameEnded":{"v":9,"over":{"result":{"Win":{"side":"Black"}},"termination":"KingCaptured"},"seed":"ab12","clientSeeds":{"white":"w","black":"b"}}}"""
+      ),
+      Right(GameEvent.GameEnded(9L, GameOver(GameResult.Win(Side.Black), Termination.KingCaptured)))
+    )
+    val snapshotWithReveal = decode[GameEvent](
+      """{"Snapshot":{"v":0,"state":{"version":0,"dfen":"fen","activeSeat":"White","dicePending":true,"status":{"Active":{}},"clocks":null,"timeControl":{"Unlimited":{}},"commit":"c0ffee","seed":null,"clientSeeds":null}}}"""
+    )
+    assert(
+      snapshotWithReveal.isRight,
+      s"a snapshot carrying the new reveal fields must still decode: $snapshotWithReveal"
+    )
 
   test("encodes what the bot sends"):
     assertEquals(BotMove(List("e2e4", "g1f3")).asJson.noSpaces, """{"moves":["e2e4","g1f3"]}""")
     assertEquals(ChallengeTarget("acme", "bob").asJson.noSpaces, """{"team":"acme","name":"bob"}""")
+    assertEquals(BotSeed("deadbeefdeadbeef").asJson.noSpaces, """{"seed":"deadbeefdeadbeef"}""")

@@ -71,6 +71,9 @@ object Protocol:
   final case class ChallengeTarget(team: String, name: String)
   final case class BotMove(moves: List[String])
 
+  /** A post-commit client dice seed (provably-fair, #13): the bot's entropy contribution, folded into every roll. */
+  final case class BotSeed(seed: String)
+
   // ── codecs ──────────────────────────────────────────────────────────────────
 
   // Total, exception-free enum codec: decode by case name, encode as the case name.
@@ -98,3 +101,4 @@ object Protocol:
   given Codec[BotGame]         = deriveCodec
   given Codec[ChallengeTarget] = deriveCodec
   given Codec[BotMove]         = deriveCodec
+  given Codec[BotSeed]         = deriveCodec

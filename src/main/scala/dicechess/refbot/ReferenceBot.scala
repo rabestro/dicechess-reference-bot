@@ -15,6 +15,7 @@ import org.http4s.client.dsl.io.*
 import org.http4s.headers.Authorization
 import org.http4s.{AuthScheme, Credentials, Request}
 
+import java.security.SecureRandom
 import scala.concurrent.duration.*
 
 /** Per-game memory: the highest game-event version already handled (turn de-duplication) plus the time control, which
@@ -32,6 +33,9 @@ final private case class GameMemory(handled: Long, timeControl: Option[TimeContr
 final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervisor[IO], strategy: Strategy):
 
   private val auth = Authorization(Credentials.Token(AuthScheme.Bearer, config.token))
+
+  // One shared, thread-safe CSPRNG for dice seeds (reused across games rather than re-seeded per call).
+  private val rng = SecureRandom()
 
   // Unary calls (challenge / accept / move) fast-fail on a short timeout; the base `client` stays untimed
   // (Main sets withTimeout(Inf)) for the long-lived ndjson streams.
@@ -60,15 +64,33 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   private def accept(id: String): IO[Unit] =
     fireUnary(Request[IO](POST, config.baseUri / "bot" / "challenge" / id / "accept").putHeaders(auth))
 
-  /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. */
+  /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. Contributes this bot's
+    * dice seed first so the server's opening-roll gate can open promptly (otherwise it waits out the grace).
+    */
   private def playGame(gameId: String): IO[Unit] =
-    Ref
-      .of[IO, GameMemory](GameMemory(handled = -1L, timeControl = None))
-      .flatMap: mem =>
-        ndjson[GameEvent](Request[IO](GET, config.baseUri / "bot" / "game" / "stream" / gameId).putHeaders(auth))
-          .evalMap(event => onGameEvent(gameId, mem, event))
-          .compile
-          .drain
+    submitSeed(gameId) *>
+      Ref
+        .of[IO, GameMemory](GameMemory(handled = -1L, timeControl = None))
+        .flatMap: mem =>
+          ndjson[GameEvent](Request[IO](GET, config.baseUri / "bot" / "game" / "stream" / gameId).putHeaders(auth))
+            .evalMap(event => onGameEvent(gameId, mem, event))
+            .compile
+            .drain
+
+  /** Contribute this bot's post-commit dice entropy (provably-fair, #13) before the opening roll. Best-effort: if it
+    * fails, the server force-starts after its grace and this seat falls back to its id, so the game still proceeds.
+    */
+  private def submitSeed(gameId: String): IO[Unit] =
+    randomSeed.flatMap: seed =>
+      IO.println(s"[refbot] game $gameId submitting dice seed") *>
+        fireUnary(POST(BotSeed(seed), config.baseUri / "bot" / "game" / gameId / "seed").putHeaders(auth))
+          .handleErrorWith(e => IO.println(s"[refbot] game $gameId seed submit failed (continuing): $e"))
+
+  /** A fresh 16-byte (128-bit) client dice seed, hex-encoded. */
+  private def randomSeed: IO[String] = IO:
+    val bytes = new Array[Byte](16)
+    rng.nextBytes(bytes)
+    bytes.map("%02x".format(_)).mkString
 
   private def onGameEvent(gameId: String, mem: Ref[IO, GameMemory], event: GameEvent): IO[Unit] = event match
     case GameEvent.DiceRolled(v, seat, _, dfen, clocks) =>
