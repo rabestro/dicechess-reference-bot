@@ -64,3 +64,19 @@ class ProtocolSuite extends munit.FunSuite:
     assertEquals(BotMove(List("e2e4", "g1f3")).asJson.noSpaces, """{"moves":["e2e4","g1f3"]}""")
     assertEquals(ChallengeTarget("acme", "bob").asJson.noSpaces, """{"team":"acme","name":"bob"}""")
     assertEquals(BotSeed("deadbeefdeadbeef").asJson.noSpaces, """{"seed":"deadbeefdeadbeef"}""")
+
+  test("decodes the seek-keeper wire (#14): the created seek and both status shapes"):
+    // POST /bot/seeks 201 — exactly what play-api's CreatedSeek emits.
+    assertEquals(
+      decode[CreatedSeek]("""{"seekId":"seek-12","secret":"cafe0123"}"""),
+      Right(CreatedSeek("seek-12", "cafe0123"))
+    )
+    // GET /lobby/seeks/{id}?secret= — open, then matched (the token is the creator's WS seat token; unused by bots).
+    assertEquals(
+      decode[SeekState]("""{"matched":false,"gameId":null,"token":null}"""),
+      Right(SeekState(matched = false, None, None))
+    )
+    assertEquals(
+      decode[SeekState]("""{"matched":true,"gameId":"game-uuid","token":"tok-w"}"""),
+      Right(SeekState(matched = true, Some("game-uuid"), Some("tok-w")))
+    )

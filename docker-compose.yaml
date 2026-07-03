@@ -14,4 +14,6 @@ services:
       PLAY_API_BASE_URL: ${PLAY_API_BASE_URL:-http://play-api:8080}
       BOT_TOKEN: ${BOT_TOKEN:-}
       BOT_ALGORITHM: ${BOT_ALGORITHM:-greedy}
+      # Standing lobby seeks (#14): keep N open offers so humans always find the house bot to play.
+      BOT_OPEN_SEEKS: ${BOT_OPEN_SEEKS:-2}
       JAVA_OPTS: "-Dcats.effect.warnOnNonMainThreadDetected=false --sun-misc-unsafe-memory-access=allow"

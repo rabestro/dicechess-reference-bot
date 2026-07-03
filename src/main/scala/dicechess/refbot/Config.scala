@@ -9,8 +9,15 @@ import org.http4s.Uri
   *   - `BOT_TOKEN` — the bot's Bearer token (must match a `PLAY_BOT_TOKENS` entry on the server)
   *   - `BOT_ALGORITHM` — engine search algorithm (default `greedy`)
   *   - `BOT_CHALLENGE` — optional `team|name` to challenge on startup (for bot-vs-bot demos)
+  *   - `BOT_OPEN_SEEKS` — standing lobby seeks to hold open so humans always find this bot (default `0` = none)
   */
-final case class Config(baseUri: Uri, token: String, algorithm: String, challenge: Option[(String, String)])
+final case class Config(
+    baseUri: Uri,
+    token: String,
+    algorithm: String,
+    challenge: Option[(String, String)],
+    openSeeks: Int
+)
 
 object Config:
 
@@ -23,4 +30,5 @@ object Config:
         case Array(team, name) if team.nonEmpty && name.nonEmpty => Some(team -> name)
         case _                                                   => None
     }
-    Config(Uri.unsafeFromString(base), token, algorithm, challenge)
+    val openSeeks = sys.env.get("BOT_OPEN_SEEKS").flatMap(_.toIntOption).filter(_ > 0).getOrElse(0)
+    Config(Uri.unsafeFromString(base), token, algorithm, challenge, openSeeks)

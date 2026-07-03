@@ -37,14 +37,18 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   // One shared, thread-safe CSPRNG for dice seeds (reused across games rather than re-seeded per call).
   private val rng = SecureRandom()
 
+  /** Standing-seek refresh cadence — comfortably under the server's ~2-minute bot-seek TTL. */
+  private val SeekPollInterval: FiniteDuration = 45.seconds
+
   // Unary calls (challenge / accept / move) fast-fail on a short timeout; the base `client` stays untimed
   // (Main sets withTimeout(Inf)) for the long-lived ndjson streams.
   private def fireUnary(request: Request[IO]): IO[Unit] = client.status(request).timeout(10.seconds).void
 
-  /** React to account events forever, with the optional opening challenge fired in the background once the account
-    * stream is up (so we don't miss our own gameStart).
+  /** React to account events forever, with the optional opening challenge and the standing-seek keeper running in the
+    * background once the account stream is up (so we don't miss our own gameStart).
     */
-  def run: IO[Unit] = openingChallenge.background.surround(accountEvents.compile.drain)
+  def run: IO[Unit] =
+    (openingChallenge.background, seekKeeper.background).tupled.surround(accountEvents.compile.drain)
 
   private def openingChallenge: IO[Unit] =
     config.challenge.traverse_ : (team, name) =>
@@ -63,6 +67,65 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
 
   private def accept(id: String): IO[Unit] =
     fireUnary(Request[IO](POST, config.baseUri / "bot" / "challenge" / id / "accept").putHeaders(auth))
+
+  // ── standing lobby seeks (#14) ──────────────────────────────────────────────
+
+  /** Keep `BOT_OPEN_SEEKS` open lobby seeks standing, so a human browsing the lobby always finds this bot to play. Each
+    * tick refreshes the held seeks (the capability poll doubles as the keep-alive under the server's bot-seek TTL) and
+    * tops the pool back up. A matched seek starts the game here — seek matches emit no `GameStart` on the account
+    * stream; this poll IS the discovery. Everything is best-effort: a server without the seek endpoints (404) or at the
+    * cap (429) just logs and retries next tick, so deploy order doesn't matter.
+    */
+  private def seekKeeper: IO[Unit] =
+    if config.openSeeks <= 0 then IO.unit
+    else
+      Ref.of[IO, Map[String, String]](Map.empty).flatMap { held =>
+        val tick = (refreshSeeks(held) *> topUpSeeks(held))
+          .handleErrorWith(e => IO.println(s"[refbot] seek keeper tick failed (retrying): $e"))
+        // Brief delay so the first tick lands after the account stream is up, then keep the pool topped forever.
+        IO.sleep(2.seconds) *> (tick *> IO.sleep(SeekPollInterval)).foreverM
+      }
+
+  /** Poll every held seek: the capability read keeps it alive server-side, reports a match (start playing, drop it —
+    * the next top-up posts a replacement), and a 404 (expired / cancelled / pre-seeks server) drops it too.
+    */
+  private def refreshSeeks(held: Ref[IO, Map[String, String]]): IO[Unit] =
+    held.get.flatMap(_.toList.traverse_ { (seekId, secret) =>
+      val uri = (config.baseUri / "lobby" / "seeks" / seekId).withQueryParam("secret", secret)
+      fetch[SeekState](Request[IO](GET, uri).putHeaders(auth)).flatMap {
+        case Right(state) if state.matched =>
+          held.update(_ - seekId) *>
+            state.gameId.traverse_ : gameId =>
+              IO.println(s"[refbot] seek $seekId matched -> game $gameId") *>
+                supervisor.supervise(playGame(gameId)).void
+        case Right(_)    => IO.unit // still open; the poll refreshed its TTL
+        case Left(error) =>
+          IO.println(s"[refbot] seek $seekId lost ($error) — will repost") *> held.update(_ - seekId)
+      }
+    })
+
+  /** Post seeks until the pool holds the configured number. Failures (a pre-seeks server, the per-bot cap) are logged
+    * and retried next tick — the keeper must never crash the bot.
+    */
+  private def topUpSeeks(held: Ref[IO, Map[String, String]]): IO[Unit] =
+    held.get.flatMap { current =>
+      List.fill(config.openSeeks - current.size)(()).traverse_ { _ =>
+        fetch[CreatedSeek](POST(io.circe.Json.obj(), config.baseUri / "bot" / "seeks").putHeaders(auth)).flatMap {
+          case Right(created) =>
+            IO.println(s"[refbot] standing seek ${created.seekId} posted") *>
+              held.update(_.updated(created.seekId, created.secret))
+          case Left(error) => IO.println(s"[refbot] seek create failed (retrying next tick): $error")
+        }
+      }
+    }
+
+  /** A unary call that needs the response body, with the same short deadline as `fireUnary`; errors as values. */
+  private def fetch[A: Decoder](request: Request[IO]): IO[Either[String, A]] =
+    client
+      .expect[A](request)(using org.http4s.circe.jsonOf[IO, A])
+      .timeout(10.seconds)
+      .attempt
+      .map(_.leftMap(_.toString.take(120)))
 
   /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. Contributes this bot's
     * dice seed first so the server's opening-roll gate can open promptly (otherwise it waits out the grace).
