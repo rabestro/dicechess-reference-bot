@@ -74,6 +74,14 @@ object Protocol:
   /** A post-commit client dice seed (provably-fair, #13): the bot's entropy contribution, folded into every roll. */
   final case class BotSeed(seed: String)
 
+  /** `POST /bot/seeks` 201: the standing lobby offer's public id plus the capability secret that polls/cancels it. */
+  final case class CreatedSeek(seekId: String, secret: String)
+
+  /** `GET /lobby/seeks/{id}?secret=` 200: still open, or matched with the seated game's id. (The `token` field is the
+    * creator's WebSocket seat token — bots are seated by principal and never need it.)
+    */
+  final case class SeekState(matched: Boolean, gameId: Option[String], token: Option[String])
+
   // ── codecs ──────────────────────────────────────────────────────────────────
 
   // Total, exception-free enum codec: decode by case name, encode as the case name.
@@ -102,3 +110,5 @@ object Protocol:
   given Codec[ChallengeTarget] = deriveCodec
   given Codec[BotMove]         = deriveCodec
   given Codec[BotSeed]         = deriveCodec
+  given Codec[CreatedSeek]     = deriveCodec
+  given Codec[SeekState]       = deriveCodec
