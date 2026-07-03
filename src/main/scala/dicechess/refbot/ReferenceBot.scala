@@ -10,10 +10,10 @@ import io.circe.Decoder
 import io.circe.parser.decode
 import org.http4s.Method.*
 import org.http4s.circe.CirceEntityCodec.given
-import org.http4s.client.Client
+import org.http4s.client.{Client, UnexpectedStatus}
 import org.http4s.client.dsl.io.*
 import org.http4s.headers.Authorization
-import org.http4s.{AuthScheme, Credentials, Request}
+import org.http4s.{AuthScheme, Credentials, Request, Status}
 
 import java.security.SecureRandom
 import scala.concurrent.duration.*
@@ -87,7 +87,9 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
       }
 
   /** Poll every held seek: the capability read keeps it alive server-side, reports a match (start playing, drop it —
-    * the next top-up posts a replacement), and a 404 (expired / cancelled / pre-seeks server) drops it too.
+    * the next top-up posts a replacement), and a definitive 404 (expired / cancelled / pre-seeks server) drops it too.
+    * A transient failure (timeout, 5xx, network blip) keeps the seek held: dropping it would leak the secret while the
+    * seek stays alive server-side, and the replacement would double-post into the per-bot cap.
     */
   private def refreshSeeks(held: Ref[IO, Map[String, String]]): IO[Unit] =
     held.get.flatMap(_.toList.traverse_ { (seekId, secret) =>
@@ -98,9 +100,11 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
             state.gameId.traverse_ : gameId =>
               IO.println(s"[refbot] seek $seekId matched -> game $gameId") *>
                 supervisor.supervise(playGame(gameId)).void
-        case Right(_)    => IO.unit // still open; the poll refreshed its TTL
+        case Right(_)                                      => IO.unit // still open; the poll refreshed its TTL
+        case Left(UnexpectedStatus(Status.NotFound, _, _)) =>
+          IO.println(s"[refbot] seek $seekId is gone — will repost") *> held.update(_ - seekId)
         case Left(error) =>
-          IO.println(s"[refbot] seek $seekId lost ($error) — will repost") *> held.update(_ - seekId)
+          IO.println(s"[refbot] seek $seekId poll failed (keeping it): ${describe(error)}")
       }
     })
 
@@ -114,18 +118,19 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
           case Right(created) =>
             IO.println(s"[refbot] standing seek ${created.seekId} posted") *>
               held.update(_.updated(created.seekId, created.secret))
-          case Left(error) => IO.println(s"[refbot] seek create failed (retrying next tick): $error")
+          case Left(error) => IO.println(s"[refbot] seek create failed (retrying next tick): ${describe(error)}")
         }
       }
     }
 
-  /** A unary call that needs the response body, with the same short deadline as `fireUnary`; errors as values. */
-  private def fetch[A: Decoder](request: Request[IO]): IO[Either[String, A]] =
-    client
-      .expect[A](request)(using org.http4s.circe.jsonOf[IO, A])
-      .timeout(10.seconds)
-      .attempt
-      .map(_.leftMap(_.toString.take(120)))
+  /** A unary call that needs the response body, with the same short deadline as `fireUnary`. Errors stay typed so the
+    * caller can tell a definitive `UnexpectedStatus` (e.g. 404 = the seek is gone) from a transient failure.
+    */
+  private def fetch[A: Decoder](request: Request[IO]): IO[Either[Throwable, A]] =
+    client.expect[A](request)(using org.http4s.circe.jsonOf[IO, A]).timeout(10.seconds).attempt
+
+  /** A short, log-friendly rendering of a failure. */
+  private def describe(error: Throwable): String = error.toString.take(120)
 
   /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. Contributes this bot's
     * dice seed first so the server's opening-roll gate can open promptly (otherwise it waits out the grace).
