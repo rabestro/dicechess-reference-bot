@@ -56,6 +56,24 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Locate Scoverage report
+        # The report path embeds the Scala version (target/scala-<ver>/...), so a
+        # hardcoded path in sonar-project.properties silently goes stale on every
+        # scalaVersion bump (the Scoverage sensor only WARNs, never fails, on a
+        # missing report — see dicechess-engine-scala#448 for how this bit that repo).
+        # Discover the real path at scan time and fail loudly if it's missing, instead
+        # of letting SonarCloud quietly show zero coverage.
+        if: ${{ env.SONAR_TOKEN != '' && github.actor != 'dependabot[bot]' }}
+        id: scoverage
+        run: |
+          REPORT=$(find target -maxdepth 3 -path '*/scoverage-report/scoverage.xml' -print -quit)
+          if [ -z "$REPORT" ]; then
+            echo "::error::No scoverage.xml found under target/ — SonarQube coverage import would silently fail."
+            exit 1
+          fi
+          echo "Found Scoverage report at $REPORT"
+          echo "report_path=$REPORT" >> "$GITHUB_OUTPUT"
+
       # Imports the scoverage report (see sonar-project.properties) into SonarCloud.
       # Requires Automatic Analysis to be OFF for this project (CI-based analysis instead).
       - name: SonarQube Scan
@@ -63,3 +81,5 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@713881670b6b3676cda39549040e2d88c70d582e # v8.2.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: -Dsonar.scala.coverage.reportPaths=${{ steps.scoverage.outputs.report_path }}
