@@ -91,4 +91,13 @@ toolchain as `dicechess-play-api`.
 
 ## License
 
-[AGPL-3.0](./LICENSE) — inherited from the dice-chess engine this bot links.
+[MIT](./LICENSE) — fork it, gut it, keep your bot private. This repository is a
+template, and its code carries no copyleft obligations.
+
+One honest caveat: the bot as shipped links the AGPL-3.0
+[dice-chess engine](https://github.com/rabestro/dicechess-engine-scala) for move
+selection, so if you distribute a bot that still links the engine, the AGPL applies
+to that combination. To stay fully permissive, replace the engine with your own move
+logic — the server sends the complete legal-move tree over the wire (`legalMoves` in
+the game state, or `GET /games/{id}/moves`), so the engine is not required for
+rule-correct play.
