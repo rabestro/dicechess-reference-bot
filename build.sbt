@@ -1,6 +1,6 @@
 ThisBuild / organization := "lv.id.jc"
 ThisBuild / version      := "0.1.0-SNAPSHOT"
-ThisBuild / scalaVersion := "3.8.3"
+ThisBuild / scalaVersion := "3.8.4"
 
 ThisBuild / description := "Reference bot for the Dice Chess Bot API (JVM, wraps the engine)."
 
