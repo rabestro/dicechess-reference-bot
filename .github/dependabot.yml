@@ -9,13 +9,32 @@ updates:
     open-pull-requests-limit: 5
     assignees:
       - "rabestro"
-    reviewers:
-      - "rabestro"
     labels:
       - "ci-cd"
       - "dependencies"
     commit-message:
       prefix: "chore"
+
+  - package-ecosystem: "sbt"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "08:00"
+    open-pull-requests-limit: 5
+    assignees:
+      - "rabestro"
+    labels:
+      - "dependencies"
+      - "ci-cd"
+    commit-message:
+      prefix: "chore"
+    ignore:
+      # sbt 1.x -> 2.x is a breaking major requiring a deliberate, manual
+      # migration (plugin compatibility, build definition changes) - not an
+      # automated bump.
+      - dependency-name: "org.scala-sbt:sbt"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "docker"
     directory: "/"
@@ -25,8 +44,6 @@ updates:
       time: "08:00"
     open-pull-requests-limit: 5
     assignees:
-      - "rabestro"
-    reviewers:
       - "rabestro"
     labels:
       - "infrastructure"
