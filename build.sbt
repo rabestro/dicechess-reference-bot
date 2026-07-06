@@ -1,12 +1,12 @@
-ThisBuild / organization := "lv.id.jc"
-ThisBuild / version      := "0.1.0-SNAPSHOT"
-ThisBuild / scalaVersion := "3.8.4"
+organization := "lv.id.jc"
+version      := "0.1.0-SNAPSHOT"
+scalaVersion := "3.8.4"
 
-ThisBuild / description := "Reference bot for the Dice Chess Bot API (JVM, wraps the engine)."
+description := "Reference bot for the Dice Chess Bot API (JVM, wraps the engine)."
 
 // The engine artifact lives in GitHub Packages, which requires authentication even for public
 // packages (read:packages scope). Same resolver/credentials trick as dicechess-play-api.
-ThisBuild / resolvers += "GitHub Packages (dicechess-engine)" at
+resolvers += "GitHub Packages (dicechess-engine)" at
   "https://maven.pkg.github.com/rabestro/dicechess-engine-scala"
 
 def ghValue(envVar: String, ghArgs: String*): Option[String] =
@@ -16,7 +16,7 @@ def ghValue(envVar: String, ghArgs: String*): Option[String] =
     .orElse(scala.util.Try(scala.sys.process.Process("gh" +: ghArgs).!!.trim).toOption)
     .filter(_.nonEmpty)
 
-ThisBuild / credentials ++= (for {
+credentials ++= (for {
   token <- ghValue("GITHUB_TOKEN", "auth", "token")
   user = sys.env.get("GITHUB_ACTOR").filter(_.nonEmpty).getOrElse("git")
 } yield Credentials("GitHub Package Registry", "maven.pkg.github.com", user, token)).toSeq

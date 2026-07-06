@@ -4,7 +4,7 @@
 # Pin -noble (Ubuntu 24.04): the unsuffixed tag drifted to 26.04, whose uutils coreutils breaks the launcher.
 FROM --platform=$BUILDPLATFORM eclipse-temurin:25-jdk-noble AS build
 
-ARG SBT_VERSION=1.12.12
+ARG SBT_VERSION=2.0.1
 ADD https://github.com/sbt/sbt/releases/download/v${SBT_VERSION}/sbt-${SBT_VERSION}.tgz /tmp/sbt.tgz
 RUN tar -xzf /tmp/sbt.tgz -C /usr/local && ln -s /usr/local/sbt/bin/sbt /usr/local/bin/sbt
 
