@@ -66,7 +66,7 @@ jobs:
         if: ${{ env.SONAR_TOKEN != '' && github.actor != 'dependabot[bot]' }}
         id: scoverage
         run: |
-          REPORT=$(find target -maxdepth 5 -path '*/scoverage-report/scoverage.xml' -print -quit)
+          REPORT=$(find target -maxdepth 7 -path '*/scoverage-report/scoverage.xml' -print -quit)
           if [ -z "$REPORT" ]; then
             echo "::error::No scoverage.xml found under target/ — SonarQube coverage import would silently fail."
             exit 1
