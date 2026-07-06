@@ -29,12 +29,6 @@ updates:
       - "ci-cd"
     commit-message:
       prefix: "chore"
-    ignore:
-      # sbt 1.x -> 2.x is a breaking major requiring a deliberate, manual
-      # migration (plugin compatibility, build definition changes) - not an
-      # automated bump.
-      - dependency-name: "org.scala-sbt:sbt"
-        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "docker"
     directory: "/"

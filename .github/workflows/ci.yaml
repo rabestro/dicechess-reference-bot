@@ -50,7 +50,7 @@ jobs:
       # Mirrors `mise run check`; invoked directly so the CI job only needs the JVM
       # toolchain instead of the full local tool set from mise.toml.
       - name: Run validation (format, coverage, tests)
-        run: sbt scalafmtCheckAll clean coverage test coverageReport
+        run: sbt "scalafmtCheckAll; clean; coverage; test; coverageReport"
         env:
           # Resolves lv.id.jc:dicechess-engine-scala from GitHub Packages
           GITHUB_ACTOR: ${{ github.actor }}
@@ -66,7 +66,7 @@ jobs:
         if: ${{ env.SONAR_TOKEN != '' && github.actor != 'dependabot[bot]' }}
         id: scoverage
         run: |
-          REPORT=$(find target -maxdepth 3 -path '*/scoverage-report/scoverage.xml' -print -quit)
+          REPORT=$(find target -maxdepth 7 -path '*/scoverage-report/scoverage.xml' -print -quit)
           if [ -z "$REPORT" ]; then
             echo "::error::No scoverage.xml found under target/ — SonarQube coverage import would silently fail."
             exit 1
