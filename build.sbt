@@ -28,7 +28,7 @@ val Http4sVersion          = "0.23.30"
 val CirceVersion           = "0.14.10"
 val LogbackVersion         = "1.5.37"
 val MunitVersion           = "1.3.3"
-val MunitCatsEffectVersion = "2.1.0"
+val MunitCatsEffectVersion = "2.2.0"
 
 lazy val root = (project in file("."))
   .enablePlugins(JavaAppPackaging)
