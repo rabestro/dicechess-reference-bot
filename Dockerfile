@@ -20,7 +20,9 @@ RUN --mount=type=secret,id=github_token \
 
 COPY src/main/ src/main/
 RUN --mount=type=secret,id=github_token \
-    GITHUB_TOKEN=$(cat /run/secrets/github_token) sbt stage
+    GITHUB_TOKEN=$(cat /run/secrets/github_token) sbt stage && \
+    mkdir -p /build/target/universal && \
+    cp -a /build/target/out/jvm/*/*/universal/stage /build/target/universal/
 
 # Runtime stage. The bot is an outbound client (no listening port), so no EXPOSE/healthcheck.
 FROM eclipse-temurin:25-jre-noble
