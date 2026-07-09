@@ -8,6 +8,7 @@ import dicechess.refbot.Protocol.given
 import fs2.Stream
 import io.circe.Decoder
 import io.circe.parser.decode
+import io.circe.syntax.*
 import org.http4s.Method.*
 import org.http4s.circe.CirceEntityCodec.given
 import org.http4s.client.{Client, UnexpectedStatus}
@@ -114,7 +115,10 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   private def topUpSeeks(held: Ref[IO, Map[String, String]]): IO[Unit] =
     held.get.flatMap { current =>
       List.fill(config.openSeeks - current.size)(()).traverse_ { _ =>
-        fetch[CreatedSeek](POST(io.circe.Json.obj(), config.baseUri / "bot" / "seeks").putHeaders(auth)).flatMap {
+        val body = config.seekTimeControl match
+          case Some(tc) => io.circe.Json.obj("timeControl" -> tc.asJson)
+          case None     => io.circe.Json.obj()
+        fetch[CreatedSeek](POST(body, config.baseUri / "bot" / "seeks").putHeaders(auth)).flatMap {
           case Right(created) =>
             IO.println(s"[refbot] standing seek ${created.seekId} posted") *>
               held.update(_.updated(created.seekId, created.secret))
