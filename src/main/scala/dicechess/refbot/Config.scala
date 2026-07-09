@@ -35,7 +35,7 @@ object Config:
     }
     val openSeeks       = env.get("BOT_OPEN_SEEKS").flatMap(_.toIntOption).filter(_ > 0).getOrElse(0)
     val seekTimeControl = env.get("BOT_SEEK_TIME_CONTROL").filter(_.nonEmpty).flatMap { spec =>
-      spec.trim.split('+') match
+      spec.trim.split('+').map(_.trim) match
         case Array(initialMin, incSec) =>
           for
             initSec <- initialMin.toIntOption.map(_ * 60)
