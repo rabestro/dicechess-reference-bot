@@ -63,6 +63,7 @@ server validates with, so a move your `Strategy` returns is accepted iff it's le
 | `BOT_ALGORITHM` | `greedy` | engine search algorithm (used by the default `EngineStrategy`) |
 | `BOT_CHALLENGE` | — | optional `team\|name` to challenge on startup (e.g. `house\|greedy`) |
 | `BOT_OPEN_SEEKS` | `0` | standing lobby seeks to keep open, so humans browsing the lobby always find this bot to play |
+| `BOT_SEEK_TIME_CONTROL` | — | optional seek time control, e.g. `10+10` (Fischer) or `10` (Sudden Death) |
 
 ## Self-play (local)
 
