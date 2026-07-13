@@ -11,7 +11,7 @@ import org.http4s.Uri
   *   - `BOT_ALGORITHM` — engine search algorithm (default `greedy`)
   *   - `BOT_CHALLENGE` — optional `team|name` to challenge on startup (for bot-vs-bot demos)
   *   - `BOT_OPEN_SEEKS` — standing lobby seeks to hold open so humans always find this bot (default `0` = none)
-  *   - `BOT_SEEK_TIME_CONTROL` — optional seek time control, e.g. `10+10` (Fischer) or `10` (Sudden Death)
+  *   - `BOT_SEEK_TIME_CONTROL` — optional seek time control, e.g. `10+5` (Fischer) or `10` (Sudden Death)
   */
 final case class Config(
     baseUri: Uri,

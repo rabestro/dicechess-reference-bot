@@ -16,5 +16,5 @@ services:
       BOT_ALGORITHM: ${BOT_ALGORITHM:-greedy}
       # Standing lobby seeks (#14): keep N open offers so humans always find the house bot to play.
       BOT_OPEN_SEEKS: ${BOT_OPEN_SEEKS:-2}
-      BOT_SEEK_TIME_CONTROL: ${BOT_SEEK_TIME_CONTROL:-10+10}
+      BOT_SEEK_TIME_CONTROL: ${BOT_SEEK_TIME_CONTROL:-10+5}
       JAVA_OPTS: "-Dcats.effect.warnOnNonMainThreadDetected=false --sun-misc-unsafe-memory-access=allow"
