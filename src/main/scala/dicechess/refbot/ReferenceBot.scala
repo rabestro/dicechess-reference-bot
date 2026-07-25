@@ -139,20 +139,22 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   /** A short, log-friendly rendering of a failure. */
   private def describe(error: Throwable): String = error.toString.take(120)
 
-  /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. Contributes this bot's
-    * dice seed first so the server's opening-roll gate can open promptly (otherwise it waits out the grace), then
-    * resolves our seat once so the opponent's rolls can be skipped. Both run before the subscription without losing
-    * anything: the stream opens with a Snapshot of the current position.
+  /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn.
+    *
+    * Two independent calls run first: the dice seed, so the server's opening-roll gate can open promptly (otherwise it
+    * waits out the grace), and the seat lookup that lets the opponent's rolls be skipped. Concurrently, because they
+    * need nothing from each other and each can burn its full 10s timeout — sequenced, two stalled calls would double
+    * the delay before this game is even subscribed. Running them ahead of the subscription loses nothing: the stream
+    * opens with a Snapshot of the current position.
     */
   private def playGame(gameId: String): IO[Unit] =
-    submitSeed(gameId) *>
-      ownSeat(gameId)
-        .flatMap(seat => Ref.of[IO, GameMemory](GameMemory(handled = -1L, timeControl = None, ownSeat = seat)))
-        .flatMap: mem =>
-          ndjson[GameEvent](Request[IO](GET, config.baseUri / "bot" / "game" / "stream" / gameId).putHeaders(auth))
-            .evalMap(event => onGameEvent(gameId, mem, event))
-            .compile
-            .drain
+    IO.both(submitSeed(gameId), ownSeat(gameId))
+      .flatMap((_, seat) => Ref.of[IO, GameMemory](GameMemory(handled = -1L, timeControl = None, ownSeat = seat)))
+      .flatMap: mem =>
+        ndjson[GameEvent](Request[IO](GET, config.baseUri / "bot" / "game" / "stream" / gameId).putHeaders(auth))
+          .evalMap(event => onGameEvent(gameId, mem, event))
+          .compile
+          .drain
 
   /** Which seat this bot holds in `gameId`. The game stream never says — every event reports the seat it is *about* —
     * so ask `GET /bot/games`, the one endpoint that answers from the caller's perspective.
