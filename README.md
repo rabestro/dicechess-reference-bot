@@ -10,12 +10,15 @@ have your own bot. JVM (Scala 3), wraps the
 
 - Authenticates with a bot token and listens on `GET /bot/stream/event`.
 - Accepts incoming challenges, and on `gameStart` streams the game (`GET /bot/game/stream/{id}`) and,
-  on each dice roll, computes a turn and submits it (`POST /bot/game/{id}/move`).
+  on each of its own dice rolls, computes a turn and submits it (`POST /bot/game/{id}/move`).
 - Reconnects the long-lived streams; the move call is fire-and-forget (the outcome arrives on the stream).
 
-It never needs to know its colour: the move endpoint resolves the bot's seat **server-side**, so the
-bot reacts to every roll and the server applies the move only on this bot's turn (off-turn submissions
-are harmlessly rejected).
+It never needs to know its colour **to be correct**: the move endpoint resolves the bot's seat
+server-side, so reacting to every roll is always safe — the server applies the move only on this bot's
+turn (off-turn submissions are harmlessly rejected). Knowing the colour is only an optimisation: the
+game stream carries both sides' rolls, so the bot reads its own seat once per game from
+`GET /bot/games` and skips the search on the opponent's rolls — halving the search work. If that
+lookup fails the bot simply searches on every roll again, as it always did.
 
 ## Quickstart (play the house bot, no registration)
 

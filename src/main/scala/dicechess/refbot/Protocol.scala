@@ -68,6 +68,16 @@ object Protocol:
 
   final case class Challenge(id: String, challenger: Principal, target: Principal)
   final case class BotGame(gameId: String)
+
+  /** One entry of `GET /bot/games`. The server sends more (`activeSeat`, `dicePending`, `timeControl`, `clocks`,
+    * `version`) — deliberately not modelled, because the game stream already carries all of it live. What only this
+    * listing knows is `seat`: which side the *caller* holds, the one thing the event stream never says.
+    */
+  final case class BotActiveGame(gameId: String, seat: Seat)
+
+  /** `GET /bot/games` 200: every live game the caller is seated in. */
+  final case class BotGames(games: List[BotActiveGame])
+
   final case class ChallengeTarget(team: String, name: String)
   final case class BotMove(moves: List[String])
 
@@ -107,6 +117,8 @@ object Protocol:
   given Codec[BotEvent]        = deriveCodec
   given Codec[Challenge]       = deriveCodec
   given Codec[BotGame]         = deriveCodec
+  given Codec[BotActiveGame]   = deriveCodec
+  given Codec[BotGames]        = deriveCodec
   given Codec[ChallengeTarget] = deriveCodec
   given Codec[BotMove]         = deriveCodec
   given Codec[BotSeed]         = deriveCodec
