@@ -65,6 +65,20 @@ class ProtocolSuite extends munit.FunSuite:
     assertEquals(ChallengeTarget("acme", "bob").asJson.noSpaces, """{"team":"acme","name":"bob"}""")
     assertEquals(BotSeed("deadbeefdeadbeef").asJson.noSpaces, """{"seed":"deadbeefdeadbeef"}""")
 
+  // GET /bot/games — the only place the wire says which seat WE hold. Play-api's BotActiveGame carries five more
+  // fields the bot deliberately ignores; pinning the real payload proves the subset still decodes.
+  test("decodes the caller's own seat out of the /bot/games listing"):
+    assertEquals(
+      decode[BotGames](
+        """{"games":[{"gameId":"g1","seat":"Black","activeSeat":"White","dicePending":true,""" +
+          """"timeControl":{"Fischer":{"initialSeconds":300,"incrementSeconds":3}},""" +
+          """"clocks":{"white":300000,"black":300000},"version":3}]}"""
+      ),
+      Right(BotGames(List(BotActiveGame("g1", Seat.Black))))
+    )
+    // No live games (e.g. the listing raced ahead of the game) — an empty list, not an error.
+    assertEquals(decode[BotGames]("""{"games":[]}"""), Right(BotGames(Nil)))
+
   test("decodes the seek-keeper wire (#14): the created seek and both status shapes"):
     // POST /bot/seeks 201 — exactly what play-api's CreatedSeek emits.
     assertEquals(

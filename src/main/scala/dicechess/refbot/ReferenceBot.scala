@@ -19,17 +19,20 @@ import org.http4s.{AuthScheme, Credentials, Request, Status}
 import java.security.SecureRandom
 import scala.concurrent.duration.*
 
-/** Per-game memory: the highest game-event version already handled (turn de-duplication) plus the time control, which
-  * rides only on the Snapshot yet is needed to budget the increment on later DiceRolled turns.
+/** Per-game memory: the highest game-event version already handled (turn de-duplication), the time control, which rides
+  * only on the Snapshot yet is needed to budget the increment on later DiceRolled turns, and the seat this bot holds —
+  * `None` when it could not be resolved (see [[ReferenceBot.ownSeat]]).
   */
-final private case class GameMemory(handled: Long, timeControl: Option[TimeControl])
+final private case class GameMemory(handled: Long, timeControl: Option[TimeControl], ownSeat: Option[Seat])
 
 /** A Lichess-bot-style client of the Dice Chess Bot API: it listens on the account stream, accepts incoming challenges,
   * and plays each game with the engine.
   *
-  * It never needs to know which colour it holds: the move endpoint resolves the bot's seat server-side, so the bot
-  * simply reacts to every dice roll by computing and submitting a move — the server applies it only when it is in fact
-  * this bot's turn (off-turn submissions are harmlessly rejected).
+  * It never needs to know which colour it holds *to be correct*: the move endpoint resolves the bot's seat server-side,
+  * so reacting to every dice roll is always safe — the server applies the move only when it is in fact this bot's turn
+  * (off-turn submissions are harmlessly rejected). Knowing the seat is purely an optimisation, and the code treats it
+  * as one: it looks the seat up once per game to skip the search on the opponent's rolls, and if the lookup fails it
+  * falls back to searching on every roll rather than freezing.
   */
 final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervisor[IO], strategy: Strategy):
 
@@ -137,17 +140,36 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   private def describe(error: Throwable): String = error.toString.take(120)
 
   /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. Contributes this bot's
-    * dice seed first so the server's opening-roll gate can open promptly (otherwise it waits out the grace).
+    * dice seed first so the server's opening-roll gate can open promptly (otherwise it waits out the grace), then
+    * resolves our seat once so the opponent's rolls can be skipped. Both run before the subscription without losing
+    * anything: the stream opens with a Snapshot of the current position.
     */
   private def playGame(gameId: String): IO[Unit] =
     submitSeed(gameId) *>
-      Ref
-        .of[IO, GameMemory](GameMemory(handled = -1L, timeControl = None))
+      ownSeat(gameId)
+        .flatMap(seat => Ref.of[IO, GameMemory](GameMemory(handled = -1L, timeControl = None, ownSeat = seat)))
         .flatMap: mem =>
           ndjson[GameEvent](Request[IO](GET, config.baseUri / "bot" / "game" / "stream" / gameId).putHeaders(auth))
             .evalMap(event => onGameEvent(gameId, mem, event))
             .compile
             .drain
+
+  /** Which seat this bot holds in `gameId`. The game stream never says — every event reports the seat it is *about* —
+    * so ask `GET /bot/games`, the one endpoint that answers from the caller's perspective.
+    *
+    * Best-effort by design: any failure (a game not yet in the listing, a blip, an older server) yields `None`, which
+    * degrades to the historical behaviour of searching on every roll. Never let this optimisation stop the bot from
+    * playing.
+    */
+  private def ownSeat(gameId: String): IO[Option[Seat]] =
+    fetch[BotGames](Request[IO](GET, config.baseUri / "bot" / "games").putHeaders(auth)).flatMap:
+      case Right(listing) =>
+        val seat = listing.games.collectFirst { case game if game.gameId == gameId => game.seat }
+        seat match
+          case Some(s) => IO.println(s"[refbot] game $gameId seated as $s").as(seat)
+          case None    => IO.println(s"[refbot] game $gameId seat unknown — searching every roll").as(None)
+      case Left(error) =>
+        IO.println(s"[refbot] game $gameId seat lookup failed (searching every roll): ${describe(error)}").as(None)
 
   /** Contribute this bot's post-commit dice entropy (provably-fair, #13) before the opening roll. Best-effort: if it
     * fails, the server force-starts after its grace and this seat falls back to its id, so the game still proceeds.
@@ -166,12 +188,16 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
 
   private def onGameEvent(gameId: String, mem: Ref[IO, GameMemory], event: GameEvent): IO[Unit] = event match
     case GameEvent.DiceRolled(v, seat, _, dfen, clocks) =>
-      mem.get.flatMap(m => maybeMove(gameId, mem, v, dfen, turnClock(seat, clocks, m.timeControl)))
+      mem.get.flatMap: m =>
+        if !ReferenceBot.shouldSearch(m.ownSeat, seat) then IO.unit
+        else maybeMove(gameId, mem, v, dfen, turnClock(seat, clocks, m.timeControl))
     case GameEvent.Snapshot(v, ps) =>
       // The time control rides only on the Snapshot; remember it so later DiceRolled turns can carry the increment.
-      mem.update(_.copy(timeControl = ps.timeControl)) *>
-        (if ps.dicePending then maybeMove(gameId, mem, v, ps.dfen, turnClock(ps.activeSeat, ps.clocks, ps.timeControl))
-         else IO.unit)
+      mem
+        .updateAndGet(_.copy(timeControl = ps.timeControl))
+        .flatMap: m =>
+          if !(ps.dicePending && ReferenceBot.shouldSearch(m.ownSeat, ps.activeSeat)) then IO.unit
+          else maybeMove(gameId, mem, v, ps.dfen, turnClock(ps.activeSeat, ps.clocks, ps.timeControl))
     case GameEvent.GameEnded(_, over) =>
       IO.println(s"[refbot] game $gameId ended: ${over.result} (${over.termination})")
     case _ => IO.unit
@@ -218,3 +244,17 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
       .filter(_.nonEmpty)
       .map(decode[A])
       .collect { case Right(value) => value }
+
+object ReferenceBot:
+
+  /** Is a position with `toMove` on the move worth searching?
+    *
+    * The dice are rolled for both sides on the same stream, and a search costs real CPU — under a strategy that
+    * serializes concurrent games behind one model session it also costs queue time that the other games' clocks pay
+    * for. So skip the opponent's rolls: the submission they produce is rejected server-side anyway.
+    *
+    * `ownSeat = None` means the seat could not be resolved, and then this must answer `true`. Correctness never depends
+    * on knowing our colour (the server arbitrates); an unknown seat may only cost the wasted search it was meant to
+    * save, never a missed turn.
+    */
+  private[refbot] def shouldSearch(ownSeat: Option[Seat], toMove: Seat): Boolean = ownSeat.forall(_ == toMove)
