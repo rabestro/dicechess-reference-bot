@@ -12,6 +12,8 @@ have your own bot. JVM (Scala 3), wraps the
 - Accepts incoming challenges, and on `gameStart` streams the game (`GET /bot/game/stream/{id}`) and,
   on each of its own dice rolls, computes a turn and submits it (`POST /bot/game/{id}/move`).
 - Reconnects the long-lived streams; the move call is fire-and-forget (the outcome arrives on the stream).
+- Resumes on startup: `GET /bot/games` lists every live game the caller is seated in, so a registered
+  bot picks its in-flight games back up after a restart instead of forfeiting them on time.
 
 It never needs to know its colour **to be correct**: the move endpoint resolves the bot's seat
 server-side, so reacting to every roll is always safe — the server applies the move only on this bot's

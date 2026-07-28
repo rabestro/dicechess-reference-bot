@@ -48,11 +48,29 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
   // (Main sets withTimeout(Inf)) for the long-lived ndjson streams.
   private def fireUnary(request: Request[IO]): IO[Unit] = client.status(request).timeout(10.seconds).void
 
-  /** React to account events forever, with the optional opening challenge and the standing-seek keeper running in the
-    * background once the account stream is up (so we don't miss our own gameStart).
+  /** React to account events forever, with game resumption, the optional opening challenge, and the standing-seek
+    * keeper running in the background once the account stream is up (so we don't miss our own gameStart).
     */
   def run: IO[Unit] =
-    (openingChallenge.background, seekKeeper.background).tupled.surround(accountEvents.compile.drain)
+    (resumeGames.background, openingChallenge.background, seekKeeper.background).tupled
+      .surround(accountEvents.compile.drain)
+
+  /** Post-restart recovery (#46): the account stream only reports a `GameStart` the moment a game begins, so a process
+    * restarted mid-game never sees it again and the game silently times out. `GET /bot/games` is the polling
+    * counterpart that lists every live game the caller is seated in regardless of when it started, so replaying it here
+    * picks each one back up through the exact same per-game stream handler a fresh `GameStart` uses — the handler's own
+    * Snapshot-first subscription and version-based de-duplication need no special-casing for a game that was already in
+    * progress. Best-effort: a lookup failure just means this restart forfeits any in-flight games, no worse than before
+    * this existed.
+    */
+  private def resumeGames: IO[Unit] =
+    fetch[BotGames](Request[IO](GET, config.baseUri / "bot" / "games").putHeaders(auth)).flatMap:
+      case Right(listing) =>
+        listing.games.traverse_ : game =>
+          IO.println(s"[refbot] resuming game ${game.gameId} after restart") *>
+            supervisor.supervise(playGame(game.gameId)).void
+      case Left(error) =>
+        IO.println(s"[refbot] resume lookup failed (in-flight games forfeited this restart): ${describe(error)}")
 
   private def openingChallenge: IO[Unit] =
     config.challenge.traverse_ : (team, name) =>
