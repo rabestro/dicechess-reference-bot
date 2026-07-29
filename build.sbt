@@ -26,7 +26,7 @@ val CatsEffectVersion      = "3.7-4972921"
 val Fs2Version             = "3.13.0"
 val Http4sVersion          = "0.23.30"
 val CirceVersion           = "0.14.10"
-val LogbackVersion         = "1.5.38"
+val LogbackVersion         = "1.6.1"
 val MunitVersion           = "1.3.4"
 val MunitCatsEffectVersion = "2.2.0"
 
