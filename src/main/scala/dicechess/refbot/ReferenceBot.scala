@@ -1,6 +1,6 @@
 package dicechess.refbot
 
-import cats.effect.{IO, Ref}
+import cats.effect.{IO, Ref, Resource}
 import cats.effect.std.Supervisor
 import cats.syntax.all.*
 import dicechess.refbot.Protocol.*
@@ -14,7 +14,7 @@ import org.http4s.circe.CirceEntityCodec.given
 import org.http4s.client.{Client, UnexpectedStatus}
 import org.http4s.client.dsl.io.*
 import org.http4s.headers.Authorization
-import org.http4s.{AuthScheme, Credentials, Request, Status}
+import org.http4s.{AuthScheme, Credentials, Request, Response, Status}
 
 import java.security.SecureRandom
 import scala.concurrent.duration.*
@@ -50,25 +50,39 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
 
   /** React to account events forever, with game resumption, the optional opening challenge, and the standing-seek
     * keeper running in the background once the account stream is up (so we don't miss our own gameStart).
+    *
+    * The account-stream connection is opened (request sent, response headers received) *before* those background tasks
+    * start: `resumeGames`' `/bot/games` snapshot is only a reliable substitute for a missed `GameStart` if the stream
+    * is already subscribed by the time that snapshot is taken — otherwise a game starting in the gap between the
+    * snapshot and the subscription is caught by neither and quietly times out.
     */
   def run: IO[Unit] =
-    (resumeGames.background, openingChallenge.background, seekKeeper.background).tupled
-      .surround(accountEvents.compile.drain)
+    accountEventsConnection.use: response =>
+      Ref
+        .of[IO, Set[String]](Set.empty)
+        .flatMap: inFlight =>
+          val events = ndjsonBody[BotEvent](response).evalMap(handle(_, inFlight))
+          (resumeGames(inFlight).background, openingChallenge.background, seekKeeper.background).tupled
+            .surround(events.compile.drain)
+
+  private def accountEventsConnection: Resource[IO, Response[IO]] =
+    client.run(Request[IO](GET, config.baseUri / "bot" / "stream" / "event").putHeaders(auth))
 
   /** Post-restart recovery (#46): the account stream only reports a `GameStart` the moment a game begins, so a process
     * restarted mid-game never sees it again and the game silently times out. `GET /bot/games` is the polling
     * counterpart that lists every live game the caller is seated in regardless of when it started, so replaying it here
     * picks each one back up through the exact same per-game stream handler a fresh `GameStart` uses — the handler's own
     * Snapshot-first subscription and version-based de-duplication need no special-casing for a game that was already in
-    * progress. Best-effort: a lookup failure just means this restart forfeits any in-flight games, no worse than before
-    * this existed.
+    * progress. Transient lookup failures (timeout, network blip, temporary 5xx) are retried with backoff; only after
+    * that budget is exhausted does this restart forfeit any in-flight games, no worse than before this existed.
     */
-  private def resumeGames: IO[Unit] =
-    fetch[BotGames](Request[IO](GET, config.baseUri / "bot" / "games").putHeaders(auth)).flatMap:
+  private def resumeGames(inFlight: Ref[IO, Set[String]]): IO[Unit] =
+    val lookup = fetch[BotGames](Request[IO](GET, config.baseUri / "bot" / "games").putHeaders(auth))
+    withRetries(maxRetries = 3, initialDelay = 1.second)(lookup).flatMap:
       case Right(listing) =>
         listing.games.traverse_ : game =>
           IO.println(s"[refbot] resuming game ${game.gameId} after restart") *>
-            supervisor.supervise(playGame(game.gameId)).void
+            superviseGame(game.gameId, inFlight)
       case Left(error) =>
         IO.println(s"[refbot] resume lookup failed (in-flight games forfeited this restart): ${describe(error)}")
 
@@ -78,14 +92,22 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
       IO.sleep(2.seconds) *> IO.println(s"[refbot] challenging $team|$name") *>
         fireUnary(POST(ChallengeTarget(team, name), config.baseUri / "bot" / "challenge").putHeaders(auth))
 
-  private def accountEvents: Stream[IO, Unit] =
-    ndjson[BotEvent](Request[IO](GET, config.baseUri / "bot" / "stream" / "event").putHeaders(auth)).evalMap(handle)
-
-  private def handle(event: BotEvent): IO[Unit] = event match
+  private def handle(event: BotEvent, inFlight: Ref[IO, Set[String]]): IO[Unit] = event match
     case BotEvent.ChallengeReceived(id, _) => IO.println(s"[refbot] accepting challenge $id") *> accept(id)
     case BotEvent.GameStart(gameId)        =>
-      IO.println(s"[refbot] game $gameId started") *> supervisor.supervise(playGame(gameId)).void
+      IO.println(s"[refbot] game $gameId started") *> superviseGame(gameId, inFlight)
     case BotEvent.ChallengeDeclined(id) => IO.println(s"[refbot] challenge $id declined")
+
+  /** Supervise `playGame` for `gameId` unless it is already running. `resumeGames`' post-restart listing and a fresh
+    * `GameStart` can name the same game — one arriving while the other is still being set up — and starting `playGame`
+    * twice would double-submit a dice seed and open two competing subscriptions to the same game stream.
+    */
+  private def superviseGame(gameId: String, inFlight: Ref[IO, Set[String]]): IO[Unit] =
+    inFlight
+      .modify(games => if games.contains(gameId) then (games, false) else (games + gameId, true))
+      .flatMap: started =>
+        if !started then IO.unit
+        else supervisor.supervise(playGame(gameId).guarantee(inFlight.update(_ - gameId))).void
 
   private def accept(id: String): IO[Unit] =
     fireUnary(Request[IO](POST, config.baseUri / "bot" / "challenge" / id / "accept").putHeaders(auth))
@@ -156,6 +178,29 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
 
   /** A short, log-friendly rendering of a failure. */
   private def describe(error: Throwable): String = error.toString.take(120)
+
+  /** Retry `attempt` with exponential backoff, up to `maxRetries` extra tries, when it fails with a transient error (a
+    * timeout, a network-level `IOException`, or a temporary 5xx `UnexpectedStatus`). A definitive failure (e.g. a 4xx)
+    * or an exhausted retry budget is returned as-is for the caller to handle.
+    */
+  private def withRetries[A](maxRetries: Int, initialDelay: FiniteDuration)(
+      attempt: IO[Either[Throwable, A]]
+  ): IO[Either[Throwable, A]] =
+    def isTransient(error: Throwable): Boolean = error match
+      case UnexpectedStatus(status, _, _)           => status.code >= 500
+      case _: java.util.concurrent.TimeoutException => true
+      case _: java.io.IOException                   => true
+      case _                                        => false
+
+    def loop(remaining: Int, delay: FiniteDuration): IO[Either[Throwable, A]] =
+      attempt.flatMap:
+        case Right(value)                                       => IO.pure(Right(value))
+        case Left(error) if remaining > 0 && isTransient(error) =>
+          IO.println(s"[refbot] transient failure, retrying in $delay ($remaining left): ${describe(error)}") *>
+            IO.sleep(delay) *> loop(remaining - 1, delay * 2)
+        case left => IO.pure(left)
+
+    loop(maxRetries, initialDelay)
 
   /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. Contributes this bot's
     * dice seed first so the server's opening-roll gate can open promptly (otherwise it waits out the grace), then
@@ -256,9 +301,12 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
 
   /** Decode an ndjson response body line-by-line; undecodable lines (e.g. keep-alives) are dropped. */
   private def ndjson[A: Decoder](request: Request[IO]): Stream[IO, A] =
-    client
-      .stream(request)
-      .flatMap(_.body.through(fs2.text.utf8.decode).through(fs2.text.lines))
+    client.stream(request).flatMap(ndjsonBody[A])
+
+  private def ndjsonBody[A: Decoder](response: Response[IO]): Stream[IO, A] =
+    response.body
+      .through(fs2.text.utf8.decode)
+      .through(fs2.text.lines)
       .filter(_.nonEmpty)
       .map(decode[A])
       .collect { case Right(value) => value }
