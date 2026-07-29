@@ -78,13 +78,15 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
     */
   private def resumeGames(inFlight: Ref[IO, Set[String]]): IO[Unit] =
     val lookup = fetch[BotGames](Request[IO](GET, config.baseUri / "bot" / "games").putHeaders(auth))
-    withRetries(maxRetries = 3, initialDelay = 1.second)(lookup).flatMap:
-      case Right(listing) =>
-        listing.games.traverse_ : game =>
-          IO.println(s"[refbot] resuming game ${game.gameId} after restart") *>
-            superviseGame(game.gameId, inFlight)
-      case Left(error) =>
-        IO.println(s"[refbot] resume lookup failed (in-flight games forfeited this restart): ${describe(error)}")
+    ReferenceBot
+      .withRetries(maxRetries = 3, initialDelay = 1.second)(lookup)
+      .flatMap:
+        case Right(listing) =>
+          listing.games.traverse_ : game =>
+            IO.println(s"[refbot] resuming game ${game.gameId} after restart") *>
+              superviseGame(game.gameId, inFlight)
+        case Left(error) =>
+          IO.println(s"[refbot] resume lookup failed (in-flight games forfeited this restart): ${describe(error)}")
 
   private def openingChallenge: IO[Unit] =
     config.challenge.traverse_ : (team, name) =>
@@ -103,8 +105,8 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
     * twice would double-submit a dice seed and open two competing subscriptions to the same game stream.
     */
   private def superviseGame(gameId: String, inFlight: Ref[IO, Set[String]]): IO[Unit] =
-    inFlight
-      .modify(games => if games.contains(gameId) then (games, false) else (games + gameId, true))
+    ReferenceBot
+      .claim(inFlight, gameId)
       .flatMap: started =>
         if !started then IO.unit
         else supervisor.supervise(playGame(gameId).guarantee(inFlight.update(_ - gameId))).void
@@ -177,30 +179,7 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
     client.expect[A](request)(using org.http4s.circe.jsonOf[IO, A]).timeout(10.seconds).attempt
 
   /** A short, log-friendly rendering of a failure. */
-  private def describe(error: Throwable): String = error.toString.take(120)
-
-  /** Retry `attempt` with exponential backoff, up to `maxRetries` extra tries, when it fails with a transient error (a
-    * timeout, a network-level `IOException`, or a temporary 5xx `UnexpectedStatus`). A definitive failure (e.g. a 4xx)
-    * or an exhausted retry budget is returned as-is for the caller to handle.
-    */
-  private def withRetries[A](maxRetries: Int, initialDelay: FiniteDuration)(
-      attempt: IO[Either[Throwable, A]]
-  ): IO[Either[Throwable, A]] =
-    def isTransient(error: Throwable): Boolean = error match
-      case UnexpectedStatus(status, _, _)           => status.code >= 500
-      case _: java.util.concurrent.TimeoutException => true
-      case _: java.io.IOException                   => true
-      case _                                        => false
-
-    def loop(remaining: Int, delay: FiniteDuration): IO[Either[Throwable, A]] =
-      attempt.flatMap:
-        case Right(value)                                       => IO.pure(Right(value))
-        case Left(error) if remaining > 0 && isTransient(error) =>
-          IO.println(s"[refbot] transient failure, retrying in $delay ($remaining left): ${describe(error)}") *>
-            IO.sleep(delay) *> loop(remaining - 1, delay * 2)
-        case left => IO.pure(left)
-
-    loop(maxRetries, initialDelay)
+  private def describe(error: Throwable): String = ReferenceBot.describe(error)
 
   /** Stream one game to its terminal, submitting a move on each fresh dice roll for our turn. Contributes this bot's
     * dice seed first so the server's opening-roll gate can open promptly (otherwise it waits out the grace), then
@@ -324,3 +303,39 @@ object ReferenceBot:
     * save, never a missed turn.
     */
   private[refbot] def shouldSearch(ownSeat: Option[Seat], toMove: Seat): Boolean = ownSeat.forall(_ == toMove)
+
+  /** A short, log-friendly rendering of a failure. */
+  private[refbot] def describe(error: Throwable): String = error.toString.take(120)
+
+  /** Is `error` worth retrying — a timeout, a network-level `IOException` (connection reset, refused, etc.), or a
+    * temporary 5xx `UnexpectedStatus`? A 4xx or any other failure is definitive.
+    */
+  private[refbot] def isTransient(error: Throwable): Boolean = error match
+    case UnexpectedStatus(status, _, _)           => status.code >= 500
+    case _: java.util.concurrent.TimeoutException => true
+    case _: java.io.IOException                   => true
+    case _                                        => false
+
+  /** Retry `attempt` with exponential backoff, up to `maxRetries` extra tries, while it keeps failing with a
+    * [[isTransient]] error. A definitive failure or an exhausted retry budget is returned as-is for the caller to
+    * handle.
+    */
+  private[refbot] def withRetries[A](maxRetries: Int, initialDelay: FiniteDuration)(
+      attempt: IO[Either[Throwable, A]]
+  ): IO[Either[Throwable, A]] =
+    def loop(remaining: Int, delay: FiniteDuration): IO[Either[Throwable, A]] =
+      attempt.flatMap:
+        case Right(value)                                       => IO.pure(Right(value))
+        case Left(error) if remaining > 0 && isTransient(error) =>
+          IO.println(s"[refbot] transient failure, retrying in $delay ($remaining left): ${describe(error)}") *>
+            IO.sleep(delay) *> loop(remaining - 1, delay * 2)
+        case left => IO.pure(left)
+
+    loop(maxRetries, initialDelay)
+
+  /** Atomically claim `id` in `inFlight`: `true` if this call added it (the caller now owns starting it), `false` if it
+    * was already claimed by a concurrent caller. Backs [[ReferenceBot.superviseGame]]'s guard against starting
+    * `playGame` twice for the same game when a post-restart listing and a live event both name it.
+    */
+  private[refbot] def claim(inFlight: Ref[IO, Set[String]], id: String): IO[Boolean] =
+    inFlight.modify(ids => if ids.contains(id) then (ids, false) else (ids + id, true))
