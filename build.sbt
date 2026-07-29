@@ -54,7 +54,5 @@ lazy val root = (project in file("."))
       "org.typelevel" %% "munit-cats-effect" % MunitCatsEffectVersion % Test
     ),
     scalacOptions ++= Seq("-Werror", "-Wunused:all", "-deprecation", "-feature", "-explain"),
-    coverageExcludedFiles := ".*Main\\.scala",
-    coverageFailOnMinimum := false,
-    Test / fork           := true
+    Test / fork := true
   )
