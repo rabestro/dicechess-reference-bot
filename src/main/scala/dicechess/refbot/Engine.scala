@@ -26,8 +26,19 @@ object Engine:
   private val rng = new Random()
 
   /** A search algorithm by name (e.g. "greedy", "monte-carlo"), or a clear failure. */
-  def algorithm(name: String): SearchAlgorithm =
-    BotRegistry.getAlgorithm(name).getOrElse(sys.error(s"unknown algorithm: $name"))
+  def algorithm(name: String, bookPath: Option[String] = None): SearchAlgorithm =
+    val base = BotRegistry.getAlgorithm(name).getOrElse(sys.error(s"unknown algorithm: $name"))
+    bookPath match
+      case Some(path) =>
+        import dicechess.engine.search.{OpeningBookBot, OpeningBookParser}
+        val tsv = scala.io.Source.fromFile(path).mkString
+        val book = OpeningBookParser.parse(tsv).fold(
+          err => throw new RuntimeException(s"Failed to parse opening book at $path", err),
+          identity
+        )
+        OpeningBookBot.decorate(base, book)
+      case None =>
+        base
 
   /** Choose a turn for the side to move in `dfen` (a DFEN with the rolled dice), as a UCI move list. `None` means there
     * is no legal move (a forced pass — the server advances on its own).

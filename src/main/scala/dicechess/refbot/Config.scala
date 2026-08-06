@@ -12,11 +12,13 @@ import org.http4s.Uri
   *   - `BOT_CHALLENGE` — optional `team|name` to challenge on startup (for bot-vs-bot demos)
   *   - `BOT_OPEN_SEEKS` — standing lobby seeks to hold open so humans always find this bot (default `0` = none)
   *   - `BOT_SEEK_TIME_CONTROL` — optional seek time control, e.g. `10+10` (Fischer) or `10` (Sudden Death)
+  *   - `OPENING_BOOK_PATH` — optional path to a TSV opening book file
   */
 final case class Config(
     baseUri: Uri,
     token: String,
     algorithm: String,
+    openingBookPath: Option[String],
     challenge: Option[(String, String)],
     openSeeks: Int,
     seekTimeControl: Option[TimeControl]
@@ -28,6 +30,7 @@ object Config:
     val base      = env.getOrElse("PLAY_API_BASE_URL", "http://localhost:8080")
     val token     = env.getOrElse("BOT_TOKEN", "")
     val algorithm = env.getOrElse("BOT_ALGORITHM", "greedy")
+    val openingBookPath = env.get("OPENING_BOOK_PATH").filter(_.nonEmpty)
     val challenge = env.get("BOT_CHALLENGE").filter(_.nonEmpty).flatMap { spec =>
       spec.split('|') match
         case Array(team, name) if team.nonEmpty && name.nonEmpty => Some(team -> name)
@@ -44,6 +47,6 @@ object Config:
         case _ =>
           spec.trim.toIntOption.map(min => TimeControl.SuddenDeath(min * 60))
     }
-    Config(Uri.unsafeFromString(base), token, algorithm, challenge, openSeeks, seekTimeControl)
+    Config(Uri.unsafeFromString(base), token, algorithm, openingBookPath, challenge, openSeeks, seekTimeControl)
 
   def fromEnv: IO[Config] = IO(fromMap(sys.env))
