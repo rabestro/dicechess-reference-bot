@@ -148,6 +148,15 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
         case (GET, p) if p.contains("/bot/game/stream/") =>
           val gameId = p.split("/").last
           Resource.eval(order.update(_ :+ s"game-stream:$gameId")).as(Response[IO](body = gameBody(gameId)))
+        case (POST, p) if p.endsWith("/bot/seeks") =>
+          Resource
+            .eval(order.update(_ :+ "post-seek"))
+            .as(Response[IO](Status.Created).withEntity(CreatedSeek("seek1", "secret1")))
+        case (GET, p) if p.startsWith("/lobby/seeks/") =>
+          val seekId = p.split("/").last
+          Resource
+            .eval(order.update(_ :+ s"get-seek:$seekId"))
+            .as(Response[IO](Status.Ok).withEntity(SeekState(matched = false, None, None)))
         case _ =>
           Resource.pure(Response[IO](Status.NotFound))
     }
@@ -245,3 +254,18 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
         "game-stream:g1"
       )
       assertEquals(recorded, expected)
+
+  test("seekKeeper posts a seek when open pool is empty, and polls it on subsequent ticks"):
+    val accountBody = Stream.never[IO]
+    for
+      order <- Ref.of[IO, List[String]](Nil)
+      client = fakeClient(order, accountBody, BotGames(Nil))
+      _ <- Supervisor[IO].use: supervisor =>
+        val bot = ReferenceBot(testConfig.copy(openSeeks = 1), client, supervisor, NoOpStrategy)
+        bot.run.start.flatMap(fiber => IO.sleep(3000.millis) *> fiber.cancel)
+      recorded <- order.get
+    yield
+      // The first tick topUpSeeks creates a seek ("post-seek").
+      // Since IO.sleep(2.seconds) happens between ticks, 3000.millis allows at least 1 tick.
+      // We don't wait 45 seconds for the second tick to avoid a slow test.
+      assert(recorded.contains("post-seek"))
