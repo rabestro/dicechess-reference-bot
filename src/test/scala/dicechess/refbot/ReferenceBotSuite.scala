@@ -197,7 +197,7 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
       }
       // Provide a gameBody that proves it remains active after the drop (drop at 50ms, reconnect at ~1050ms)
       gameBody = Stream.sleep_[IO](1200.millis) ++ Stream.eval(order.update(_ :+ "game-g1-still-alive")).drain
-      client = fakeClient(order, accountBody, games, _ => gameBody)
+      client   = fakeClient(order, accountBody, games, _ => gameBody)
       _ <- Supervisor[IO].use: supervisor =>
         val bot = ReferenceBot(testConfig, client, supervisor, NoOpStrategy)
         bot.run.start.flatMap(fiber => IO.sleep(1500.millis) *> fiber.cancel)
@@ -208,7 +208,7 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
         "bot-games-called",
         "seed:g1",
         "bot-games-called",
-        "game-stream:g1", // started immediately after seed
+        "game-stream:g1",    // started immediately after seed
         "account-connected", // reconnects after 1 second
         "bot-games-called",
         "game-g1-still-alive" // side effect executes AFTER reconnect proving fiber survived
