@@ -57,13 +57,19 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
     * snapshot and the subscription is caught by neither and quietly times out.
     */
   def run: IO[Unit] =
-    accountEventsConnection.use: response =>
-      Ref
-        .of[IO, Set[String]](Set.empty)
-        .flatMap: inFlight =>
-          val events = ndjsonBody[BotEvent](response).evalMap(handle(_, inFlight))
-          (resumeGames(inFlight).background, openingChallenge.background, seekKeeper.background).tupled
-            .surround(events.compile.drain)
+    Ref
+      .of[IO, Set[String]](Set.empty)
+      .flatMap: inFlight =>
+        IO.deferred[Unit]
+          .flatMap: streamUp =>
+            val runStream = ReferenceBot.keepAlive("account stream"):
+              accountEventsConnection.use: response =>
+                streamUp.complete(()).attempt *>
+                  resumeGames(inFlight).background.surround:
+                    ndjsonBody[BotEvent](response).evalMap(handle(_, inFlight)).compile.drain
+
+            ((streamUp.get *> openingChallenge).background, (streamUp.get *> seekKeeper).background).tupled
+              .surround(runStream)
 
   private def accountEventsConnection: Resource[IO, Response[IO]] =
     client.run(Request[IO](GET, config.baseUri / "bot" / "stream" / "event").putHeaders(auth))
@@ -191,10 +197,11 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
       ownSeat(gameId)
         .flatMap(seat => Ref.of[IO, GameMemory](GameMemory(handled = -1L, timeControl = None, ownSeat = seat)))
         .flatMap: mem =>
-          ndjson[GameEvent](Request[IO](GET, config.baseUri / "bot" / "game" / "stream" / gameId).putHeaders(auth))
-            .evalMap(event => onGameEvent(gameId, mem, event))
-            .compile
-            .drain
+          ReferenceBot.keepAlive(s"game $gameId stream"):
+            ndjson[GameEvent](Request[IO](GET, config.baseUri / "bot" / "game" / "stream" / gameId).putHeaders(auth))
+              .evalMap(event => onGameEvent(gameId, mem, event))
+              .compile
+              .drain
 
   /** Which seat this bot holds in `gameId`. The game stream never says — every event reports the seat it is *about* —
     * so ask `GET /bot/games`, the one endpoint that answers from the caller's perspective.
@@ -311,10 +318,30 @@ object ReferenceBot:
     * temporary 5xx `UnexpectedStatus`? A 4xx or any other failure is definitive.
     */
   private[refbot] def isTransient(error: Throwable): Boolean = error match
-    case UnexpectedStatus(status, _, _)           => status.code >= 500
-    case _: java.util.concurrent.TimeoutException => true
-    case _: java.io.IOException                   => true
-    case _                                        => false
+    case UnexpectedStatus(status, _, _)                                        => status.code >= 500
+    case _: java.util.concurrent.TimeoutException                              => true
+    case _: java.io.IOException                                                => true
+    case e if e.getClass.getName.contains("EmberException$ReachedEndOfStream") => true
+    case _                                                                     => false
+
+  /** Retry `attempt` indefinitely with exponential backoff while it fails with a transient error, and reconnect
+    * immediately if it finishes normally (e.g. server deploy).
+    */
+  private[refbot] def keepAlive(name: String)(attempt: IO[Unit]): IO[Unit] =
+    def loop(delay: FiniteDuration): IO[Unit] =
+      attempt.attempt.flatMap:
+        case Right(()) =>
+          IO.println(s"[refbot] $name closed normally, reconnecting in 1 second") *>
+            IO.sleep(1.second) *> loop(1.second)
+        case Left(error) if isTransient(error) =>
+          val nextDelay = if delay < 30.seconds then delay * 2 else 30.seconds
+          IO.println(s"[refbot] $name failed (transient), retrying in $delay: ${describe(error)}") *>
+            IO.sleep(delay) *> loop(nextDelay)
+        case Left(error) =>
+          IO.println(s"[refbot] $name failed (fatal): ${describe(error)}") *>
+            IO.raiseError(error)
+
+    loop(1.second)
 
   /** Retry `attempt` with exponential backoff, up to `maxRetries` extra tries, while it keeps failing with a
     * [[isTransient]] error. A definitive failure or an exhausted retry budget is returned as-is for the caller to
