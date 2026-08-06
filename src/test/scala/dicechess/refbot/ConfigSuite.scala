@@ -25,3 +25,11 @@ class ConfigSuite extends munit.FunSuite:
   test("defaults to None if BOT_SEEK_TIME_CONTROL is absent"):
     val config = Config.fromMap(Map.empty)
     assertEquals(config.seekTimeControl, None)
+
+  test("parses OPENING_BOOK_PATH correctly"):
+    val config = Config.fromMap(Map("OPENING_BOOK_PATH" -> "/path/to/book.tsv"))
+    assertEquals(config.openingBookPath, Some("/path/to/book.tsv"))
+
+  test("defaults to None if OPENING_BOOK_PATH is absent or empty"):
+    assertEquals(Config.fromMap(Map.empty).openingBookPath, None)
+    assertEquals(Config.fromMap(Map("OPENING_BOOK_PATH" -> "")).openingBookPath, None)

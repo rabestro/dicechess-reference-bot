@@ -31,11 +31,14 @@ object Engine:
     bookPath match
       case Some(path) =>
         import dicechess.engine.search.{OpeningBookBot, OpeningBookParser}
-        val tsv = scala.io.Source.fromFile(path).mkString
-        val book = OpeningBookParser.parse(tsv).fold(
-          err => throw new RuntimeException(s"Failed to parse opening book at $path", err),
-          identity
-        )
+        import scala.util.Using
+        val tsv  = Using(scala.io.Source.fromFile(path))(_.mkString).get
+        val book = OpeningBookParser
+          .parse(tsv)
+          .fold(
+            err => throw new RuntimeException(s"Failed to parse opening book at $path", err),
+            identity
+          )
         OpeningBookBot.decorate(base, book)
       case None =>
         base

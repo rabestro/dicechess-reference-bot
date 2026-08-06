@@ -27,11 +27,11 @@ final case class Config(
 object Config:
 
   def fromMap(env: Map[String, String]): Config =
-    val base      = env.getOrElse("PLAY_API_BASE_URL", "http://localhost:8080")
-    val token     = env.getOrElse("BOT_TOKEN", "")
-    val algorithm = env.getOrElse("BOT_ALGORITHM", "greedy")
+    val base            = env.getOrElse("PLAY_API_BASE_URL", "http://localhost:8080")
+    val token           = env.getOrElse("BOT_TOKEN", "")
+    val algorithm       = env.getOrElse("BOT_ALGORITHM", "greedy")
     val openingBookPath = env.get("OPENING_BOOK_PATH").filter(_.nonEmpty)
-    val challenge = env.get("BOT_CHALLENGE").filter(_.nonEmpty).flatMap { spec =>
+    val challenge       = env.get("BOT_CHALLENGE").filter(_.nonEmpty).flatMap { spec =>
       spec.split('|') match
         case Array(team, name) if team.nonEmpty && name.nonEmpty => Some(team -> name)
         case _                                                   => None
