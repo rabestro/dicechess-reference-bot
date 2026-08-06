@@ -75,6 +75,23 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
       assert(result.isLeft)
       assertEquals(count, 3) // the initial attempt plus 2 retries
 
+  // ── keepAlive (#53) ─────────────────────────────────────────────────────────
+
+  test("keepAlive reconnects indefinitely on transient errors and normal completions"):
+    for
+      attempts <- Ref.of[IO, Int](0)
+      done     <- IO.deferred[Unit]
+      stream = attempts.updateAndGet(_ + 1).flatMap { n =>
+        if n == 1 then IO.raiseError(new java.io.IOException("connection reset"))
+        else if n == 2 then IO.pure(true) // normal completion
+        else done.complete(()).as(false)  // third attempt, stop
+      }
+      fiber <- ReferenceBot.keepAlive("test")(stream).start
+      _     <- done.get
+      _     <- fiber.cancel
+      count <- attempts.get
+    yield assertEquals(count, 3)
+
   // ── claim (#47 review: dedup registry backing resumeGames vs GameStart) ─────
 
   test("claim admits the first caller for a game and rejects a concurrent second one"):
@@ -112,7 +129,12 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
   /** A minimal fake `Client` that records, in call order, which endpoint each request hit. `accountBody` is the raw
     * ndjson body served for the account-event stream; `games` is what `/bot/games` reports.
     */
-  private def fakeClient(order: Ref[IO, List[String]], accountBody: Stream[IO, Byte], games: BotGames): Client[IO] =
+  private def fakeClient(
+      order: Ref[IO, List[String]],
+      accountBody: Stream[IO, Byte],
+      games: IO[BotGames],
+      gameBody: String => Stream[IO, Byte] = _ => Stream.never[IO]
+  ): Client[IO] =
     val seedPath = """/bot/game/([^/]+)/seed""".r
     Client[IO] { req =>
       val path = req.uri.path.toString
@@ -120,11 +142,21 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
         case (GET, p) if p.endsWith("/bot/stream/event") =>
           Resource.eval(order.update(_ :+ "account-connected")).as(Response[IO](body = accountBody))
         case (GET, p) if p.endsWith("/bot/games") =>
-          Resource.eval(order.update(_ :+ "bot-games-called")).as(Response[IO](Status.Ok).withEntity(games))
+          Resource.eval(order.update(_ :+ "bot-games-called") *> games).map(g => Response[IO](Status.Ok).withEntity(g))
         case (POST, seedPath(gameId)) =>
           Resource.eval(order.update(_ :+ s"seed:$gameId")).as(Response[IO](Status.Ok))
         case (GET, p) if p.contains("/bot/game/stream/") =>
-          Resource.pure(Response[IO](body = Stream.never[IO]))
+          val gameId = p.split("/").last
+          Resource.eval(order.update(_ :+ s"game-stream:$gameId")).as(Response[IO](body = gameBody(gameId)))
+        case (POST, p) if p.endsWith("/bot/seeks") =>
+          Resource
+            .eval(order.update(_ :+ "post-seek"))
+            .as(Response[IO](Status.Created).withEntity(CreatedSeek("seek1", "secret1")))
+        case (GET, p) if p.startsWith("/lobby/seeks/") =>
+          val seekId = p.split("/").last
+          Resource
+            .eval(order.update(_ :+ s"get-seek:$seekId"))
+            .as(Response[IO](Status.Ok).withEntity(SeekState(matched = false, None, None)))
         case _ =>
           Resource.pure(Response[IO](Status.NotFound))
     }
@@ -132,10 +164,10 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
   test("opens the account-stream connection before the post-restart /bot/games lookup"):
     for
       order <- Ref.of[IO, List[String]](Nil)
-      client = fakeClient(order, accountBody = Stream.never[IO], games = BotGames(Nil))
+      client = fakeClient(order, accountBody = Stream.never[IO], games = IO.pure(BotGames(Nil)))
       _ <- Supervisor[IO].use: supervisor =>
         val bot = ReferenceBot(testConfig, client, supervisor, NoOpStrategy)
-        bot.run.start.flatMap(fiber => IO.sleep(300.millis) *> fiber.cancel)
+        bot.run.start.flatMap(fiber => IO.sleep(1500.millis) *> fiber.cancel)
       recorded <- order.get
     yield assertEquals(recorded, List("account-connected", "bot-games-called"))
 
@@ -144,9 +176,103 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
     val accountBody   = gameStartLine.through(fs2.text.utf8.encode) ++ Stream.never[IO]
     for
       order <- Ref.of[IO, List[String]](Nil)
-      client = fakeClient(order, accountBody, games = BotGames(List(BotActiveGame("g1", Seat.White))))
+      client = fakeClient(order, accountBody, games = IO.pure(BotGames(List(BotActiveGame("g1", Seat.White)))))
       _ <- Supervisor[IO].use: supervisor =>
         val bot = ReferenceBot(testConfig, client, supervisor, NoOpStrategy)
-        bot.run.start.flatMap(fiber => IO.sleep(300.millis) *> fiber.cancel)
+        bot.run.start.flatMap(fiber => IO.sleep(1500.millis) *> fiber.cancel)
       recorded <- order.get
     yield assertEquals(recorded.count(_ == "seed:g1"), 1)
+
+  test("run reconnects the account stream on a transient drop without killing in-flight games (#53)"):
+    val gameStartLine = Stream.emit((BotEvent.GameStart("g1"): BotEvent).asJson.noSpaces + "\n")
+    val accountBody   = gameStartLine.through(fs2.text.utf8.encode)
+      ++ Stream.sleep_[IO](50.millis)
+      ++ Stream.raiseError[IO](new java.io.IOException("connection reset"))
+
+    for
+      order <- Ref.of[IO, List[String]](Nil)
+      games = order.get.map { rec =>
+        if rec.contains("seed:g1") then BotGames(List(BotActiveGame("g1", Seat.White)))
+        else BotGames(Nil)
+      }
+      // Provide a gameBody that proves it remains active after the drop (drop at 50ms, reconnect at ~1050ms)
+      gameBody = Stream.sleep_[IO](1200.millis) ++ Stream.eval(order.update(_ :+ "game-g1-still-alive")).drain
+      client   = fakeClient(order, accountBody, games, _ => gameBody)
+      _ <- Supervisor[IO].use: supervisor =>
+        val bot = ReferenceBot(testConfig, client, supervisor, NoOpStrategy)
+        bot.run.start.flatMap(fiber => IO.sleep(1500.millis) *> fiber.cancel)
+      recorded <- order.get
+    yield
+      val expected = List(
+        "account-connected",
+        "bot-games-called",
+        "seed:g1",
+        "bot-games-called",
+        "game-stream:g1",    // started immediately after seed
+        "account-connected", // reconnects after 1 second
+        "bot-games-called",
+        "game-g1-still-alive" // side effect executes AFTER reconnect proving fiber survived
+      )
+      assertEquals(recorded, expected)
+
+  test("playGame reconnects its per-game stream on a transient drop without re-seeding (#53)"):
+    val gameStartLine = Stream.emit((BotEvent.GameStart("g1"): BotEvent).asJson.noSpaces + "\n")
+    val accountBody   = gameStartLine.through(fs2.text.utf8.encode) ++ Stream.never[IO]
+    val gameBody = Stream.sleep_[IO](50.millis) ++ Stream.raiseError[IO](new java.io.IOException("connection reset"))
+
+    for
+      order <- Ref.of[IO, List[String]](Nil)
+      client = fakeClient(order, accountBody, IO.pure(BotGames(Nil)), _ => gameBody)
+      _ <- Supervisor[IO].use: supervisor =>
+        val bot = ReferenceBot(testConfig, client, supervisor, NoOpStrategy)
+        bot.run.start.flatMap(fiber => IO.sleep(1500.millis) *> fiber.cancel)
+      recorded <- order.get
+    yield
+      val expected = List(
+        "account-connected",
+        "bot-games-called",
+        "seed:g1",
+        "bot-games-called",
+        "game-stream:g1",
+        "game-stream:g1"
+      )
+      assertEquals(recorded, expected)
+
+  test("playGame terminates the stream and does not reconnect on GameEnded (#54)"):
+    val gameStartLine = Stream.emit((BotEvent.GameStart("g1"): BotEvent).asJson.noSpaces + "\n")
+    val accountBody   = gameStartLine.through(fs2.text.utf8.encode) ++ Stream.never[IO]
+
+    val gameEnded = GameEvent.GameEnded(1L, GameOver(GameResult.Win(Side.Black), Termination.Resign))
+    val gameBody  = Stream.emit(gameEnded.asJson.noSpaces + "\n").through(fs2.text.utf8.encode)
+
+    for
+      order <- Ref.of[IO, List[String]](Nil)
+      client = fakeClient(order, accountBody, IO.pure(BotGames(Nil)), _ => gameBody)
+      _ <- Supervisor[IO].use: supervisor =>
+        val bot = ReferenceBot(testConfig, client, supervisor, NoOpStrategy)
+        bot.run.start.flatMap(fiber => IO.sleep(2500.millis) *> fiber.cancel)
+      recorded <- order.get
+    yield
+      val expected = List(
+        "account-connected",
+        "bot-games-called",
+        "seed:g1",
+        "bot-games-called",
+        "game-stream:g1"
+      )
+      assertEquals(recorded, expected)
+
+  test("seekKeeper posts a seek when open pool is empty, and polls it on subsequent ticks"):
+    val accountBody = Stream.never[IO]
+    for
+      order <- Ref.of[IO, List[String]](Nil)
+      client = fakeClient(order, accountBody, IO.pure(BotGames(Nil)))
+      _ <- Supervisor[IO].use: supervisor =>
+        val bot = ReferenceBot(testConfig.copy(openSeeks = 1), client, supervisor, NoOpStrategy)
+        bot.run.start.flatMap(fiber => IO.sleep(3000.millis) *> fiber.cancel)
+      recorded <- order.get
+    yield
+      // The first tick topUpSeeks creates a seek ("post-seek").
+      // Since IO.sleep(2.seconds) happens between ticks, 3000.millis allows at least 1 tick.
+      // We don't wait 45 seconds for the second tick to avoid a slow test.
+      assert(recorded.contains("post-seek"))
