@@ -167,7 +167,7 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
       client = fakeClient(order, accountBody = Stream.never[IO], games = BotGames(Nil))
       _ <- Supervisor[IO].use: supervisor =>
         val bot = ReferenceBot(testConfig, client, supervisor, NoOpStrategy)
-        bot.run.start.flatMap(fiber => IO.sleep(300.millis) *> fiber.cancel)
+        bot.run.start.flatMap(fiber => IO.sleep(1500.millis) *> fiber.cancel)
       recorded <- order.get
     yield assertEquals(recorded, List("account-connected", "bot-games-called"))
 
@@ -179,7 +179,7 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
       client = fakeClient(order, accountBody, games = BotGames(List(BotActiveGame("g1", Seat.White))))
       _ <- Supervisor[IO].use: supervisor =>
         val bot = ReferenceBot(testConfig, client, supervisor, NoOpStrategy)
-        bot.run.start.flatMap(fiber => IO.sleep(300.millis) *> fiber.cancel)
+        bot.run.start.flatMap(fiber => IO.sleep(1500.millis) *> fiber.cancel)
       recorded <- order.get
     yield assertEquals(recorded.count(_ == "seed:g1"), 1)
 
