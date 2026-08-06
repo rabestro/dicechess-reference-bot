@@ -83,8 +83,8 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
       done     <- IO.deferred[Unit]
       stream = attempts.updateAndGet(_ + 1).flatMap { n =>
         if n == 1 then IO.raiseError(new java.io.IOException("connection reset"))
-        else if n == 2 then IO.unit // normal completion
-        else done.complete(()).void // third attempt
+        else if n == 2 then IO.pure(true) // normal completion
+        else done.complete(()).as(false)  // third attempt, stop
       }
       fiber <- ReferenceBot.keepAlive("test")(stream).start
       _     <- done.get
@@ -218,6 +218,30 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
         "seed:g1",
         "bot-games-called",
         "game-stream:g1",
+        "game-stream:g1"
+      )
+      assertEquals(recorded, expected)
+
+  test("playGame terminates the stream and does not reconnect on GameEnded (#54)"):
+    val gameStartLine = Stream.emit((BotEvent.GameStart("g1"): BotEvent).asJson.noSpaces + "\n")
+    val accountBody   = gameStartLine.through(fs2.text.utf8.encode) ++ Stream.never[IO]
+
+    val gameEnded = GameEvent.GameEnded(1L, GameOver(GameResult.Win(Side.Black), Termination.Resign))
+    val gameBody  = Stream.emit(gameEnded.asJson.noSpaces + "\n").through(fs2.text.utf8.encode) ++ Stream.never[IO]
+
+    for
+      order <- Ref.of[IO, List[String]](Nil)
+      client = fakeClient(order, accountBody, BotGames(Nil), _ => gameBody)
+      _ <- Supervisor[IO].use: supervisor =>
+        val bot = ReferenceBot(testConfig, client, supervisor, NoOpStrategy)
+        bot.run.start.flatMap(fiber => IO.sleep(1500.millis) *> fiber.cancel)
+      recorded <- order.get
+    yield
+      val expected = List(
+        "account-connected",
+        "bot-games-called",
+        "seed:g1",
+        "bot-games-called",
         "game-stream:g1"
       )
       assertEquals(recorded, expected)

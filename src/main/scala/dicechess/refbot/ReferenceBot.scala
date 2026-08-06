@@ -66,7 +66,7 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
               accountEventsConnection.use: response =>
                 streamUp.complete(()).attempt *>
                   resumeGames(inFlight).background.surround:
-                    ndjsonBody[BotEvent](response).evalMap(handle(_, inFlight)).compile.drain
+                    ndjsonBody[BotEvent](response).evalMap(handle(_, inFlight)).compile.drain.as(true)
 
             ((streamUp.get *> openingChallenge).background, (streamUp.get *> seekKeeper).background).tupled
               .surround(runStream)
@@ -199,9 +199,15 @@ final class ReferenceBot(config: Config, client: Client[IO], supervisor: Supervi
         .flatMap: mem =>
           ReferenceBot.keepAlive(s"game $gameId stream"):
             ndjson[GameEvent](Request[IO](GET, config.baseUri / "bot" / "game" / "stream" / gameId).putHeaders(auth))
-              .evalMap(event => onGameEvent(gameId, mem, event))
+              .evalTap(event => onGameEvent(gameId, mem, event))
+              .takeThrough:
+                case _: GameEvent.GameEnded => false
+                case _                      => true
               .compile
-              .drain
+              .last
+              .map:
+                case Some(_: GameEvent.GameEnded) => false // terminal, don't reconnect
+                case _                            => true
 
   /** Which seat this bot holds in `gameId`. The game stream never says — every event reports the seat it is *about* —
     * so ask `GET /bot/games`, the one endpoint that answers from the caller's perspective.
@@ -327,12 +333,14 @@ object ReferenceBot:
   /** Retry `attempt` indefinitely with exponential backoff while it fails with a transient error, and reconnect
     * immediately if it finishes normally (e.g. server deploy).
     */
-  private[refbot] def keepAlive(name: String)(attempt: IO[Unit]): IO[Unit] =
+  private[refbot] def keepAlive(name: String)(attempt: IO[Boolean]): IO[Unit] =
     def loop(delay: FiniteDuration): IO[Unit] =
       attempt.attempt.flatMap:
-        case Right(()) =>
+        case Right(true) =>
           IO.println(s"[refbot] $name closed normally, reconnecting in 1 second") *>
             IO.sleep(1.second) *> loop(1.second)
+        case Right(false) =>
+          IO.println(s"[refbot] $name finished and is terminal")
         case Left(error) if isTransient(error) =>
           val nextDelay = if delay < 30.seconds then delay * 2 else 30.seconds
           IO.println(s"[refbot] $name failed (transient), retrying in $delay: ${describe(error)}") *>
