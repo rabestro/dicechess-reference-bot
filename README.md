@@ -65,6 +65,7 @@ server validates with, so a move your `Strategy` returns is accepted iff it's le
 |-----|---------|---------|
 | `PLAY_API_BASE_URL` | `http://localhost:8080` | the play-api base URL |
 | `BOT_TOKEN` | — | the bot's Bearer token (anonymous via `POST /bot/anon`, or a `PLAY_BOT_TOKENS` entry) |
+| `OPENING_BOOK_PATH` | — | optional path to a TSV opening book file (`sample_opening_book.tsv` is provided as an example) |
 | `BOT_ALGORITHM` | `greedy` | engine search algorithm (used by the default `EngineStrategy`) |
 | `BOT_CHALLENGE` | — | optional `team\|name` to challenge on startup (e.g. `house\|greedy`) |
 | `BOT_OPEN_SEEKS` | `0` | standing lobby seeks to keep open, so humans browsing the lobby always find this bot to play |
@@ -81,7 +82,7 @@ uuid-based names, so prefer challenging the house bot for a quick demo.)
 
 CI publishes a multi-arch image to `ghcr.io/rabestro/dicechess-reference-bot` on every push to `main`
 (and tagged `vX.Y.Z` on release). Run it next to the play-api via `docker-compose.yaml` — set
-`BOT_TOKEN`, `PLAY_API_BASE_URL`, and `BOT_ALGORITHM` in `.env`:
+`BOT_TOKEN`, `PLAY_API_BASE_URL`, `BOT_ALGORITHM`, and `OPENING_BOOK_PATH` in `.env`:
 
 ```bash
 docker compose pull && docker compose up -d

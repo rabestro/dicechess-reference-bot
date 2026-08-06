@@ -38,8 +38,8 @@ trait Strategy:
   * remaining time as a per-turn search deadline (via the engine's TimeManager); instant algorithms (greedy) ignore the
   * clock. Swap this out for your own [[Strategy]] in `Main` to build your bot.
   */
-final class EngineStrategy(algorithmName: String) extends Strategy:
-  private val algorithm = Engine.algorithm(algorithmName)
+final class EngineStrategy(algorithmName: String, openingBookPath: Option[String] = None) extends Strategy:
+  private val algorithm = Engine.algorithm(algorithmName, openingBookPath)
 
   def chooseMoves(ctx: MoveContext): Option[List[String]] =
     Engine.chooseMoves(

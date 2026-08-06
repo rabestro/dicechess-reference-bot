@@ -21,7 +21,7 @@ credentials ++= (for {
   user = sys.env.get("GITHUB_ACTOR").filter(_.nonEmpty).getOrElse("git")
 } yield Credentials("GitHub Package Registry", "maven.pkg.github.com", user, token)).toSeq
 
-val DiceChessEngineVersion = "1.11.3"
+val DiceChessEngineVersion = "1.13.0"
 val CatsEffectVersion      = "3.7-4972921"
 val Fs2Version             = "3.13.0"
 val Http4sVersion          = "0.23.30"
@@ -42,13 +42,13 @@ lazy val root = (project in file("."))
       "org.typelevel" %% "cats-effect" % CatsEffectVersion,
       "co.fs2"        %% "fs2-core"    % Fs2Version,
       // HTTP client + JSON (talks to the Bot API: ndjson streams + REST)
-      "org.http4s" %% "http4s-ember-client" % Http4sVersion,
-      "org.http4s" %% "http4s-dsl"          % Http4sVersion,
-      "org.http4s" %% "http4s-circe"        % Http4sVersion,
-      "io.circe"   %% "circe-core"          % CirceVersion,
-      "io.circe"   %% "circe-generic"       % CirceVersion,
-      "io.circe"   %% "circe-parser"        % CirceVersion,
-      "ch.qos.logback" % "logback-classic"  % LogbackVersion % Runtime,
+      "org.http4s"    %% "http4s-ember-client" % Http4sVersion,
+      "org.http4s"    %% "http4s-dsl"          % Http4sVersion,
+      "org.http4s"    %% "http4s-circe"        % Http4sVersion,
+      "io.circe"      %% "circe-core"          % CirceVersion,
+      "io.circe"      %% "circe-generic"       % CirceVersion,
+      "io.circe"      %% "circe-parser"        % CirceVersion,
+      "ch.qos.logback" % "logback-classic"     % LogbackVersion % Runtime,
       // Testing
       "org.scalameta" %% "munit"             % MunitVersion           % Test,
       "org.typelevel" %% "munit-cats-effect" % MunitCatsEffectVersion % Test

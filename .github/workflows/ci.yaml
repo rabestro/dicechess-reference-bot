@@ -50,7 +50,10 @@ jobs:
       # Mirrors `mise run check`; invoked directly so the CI job only needs the JVM
       # toolchain instead of the full local tool set from mise.toml.
       - name: Run validation (format, coverage, tests)
-        run: sbt "scalafmtCheckAll; clean; coverage; test; coverageReport"
+        run: |
+          sbt shutdown
+          rm -rf target/covcache
+          sbt -Dsbt.global.localcache="$PWD/target/covcache" "scalafmtCheckAll; clean; coverage; testOnly *; coverageReport"
         env:
           # Resolves lv.id.jc:dicechess-engine-scala from GitHub Packages
           GITHUB_ACTOR: ${{ github.actor }}

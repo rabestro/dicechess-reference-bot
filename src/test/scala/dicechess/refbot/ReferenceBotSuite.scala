@@ -100,6 +100,7 @@ class ReferenceBotSuite extends munit.CatsEffectSuite:
     baseUri = Uri.unsafeFromString("http://localhost"),
     token = "test-token",
     algorithm = "greedy",
+    openingBookPath = None,
     challenge = None,
     openSeeks = 0,
     seekTimeControl = None

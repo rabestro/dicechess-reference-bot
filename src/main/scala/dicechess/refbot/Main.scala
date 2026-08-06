@@ -21,4 +21,4 @@ object Main extends IOApp.Simple:
         .use: client =>
           Supervisor[IO].use: supervisor =>
             // The reference strategy is the engine; a fork swaps in its own `Strategy` here.
-            ReferenceBot(config, client, supervisor, EngineStrategy(config.algorithm)).run
+            ReferenceBot(config, client, supervisor, EngineStrategy(config.algorithm, config.openingBookPath)).run
